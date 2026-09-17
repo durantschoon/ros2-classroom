@@ -16,6 +16,10 @@ The former OCI/Podman implementation remains available on the `podman` branch.
 See [docs/ros-distributions.md](docs/ros-distributions.md) for why this branch
 uses Jazzy rather than the newer Lyrical release.
 
+The `plan/cross-platform-ros-tutorials` branch contains an implementation plan
+for a Docker-based tutorial workstation that runs on Linux, macOS, and Windows.
+See [docs/cross-platform-tutorial-workstation.md](docs/cross-platform-tutorial-workstation.md).
+
 The environment package is a symlink union: Guix sees one ROS profile entry
 instead of repeatedly traversing ROS's dense propagated-input graph. It
 contains only turtlesim, `ros2 run`, and their runtime dependencies; the
