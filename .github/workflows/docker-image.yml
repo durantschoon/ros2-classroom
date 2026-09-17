@@ -18,7 +18,8 @@ jobs:
           sudo apt-get install --yes --no-install-recommends shellcheck
           shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh \
                      scripts/smoke-container scripts/base-image-digest \
-                     scripts/compose-command scripts/check-host scripts/open-url
+                     scripts/compose-command scripts/check-host scripts/open-url \
+                     scripts/run-quiet
 
       - name: Validate the compose configuration
         run: docker compose config --quiet

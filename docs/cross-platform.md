@@ -165,9 +165,11 @@ fixed by `scripts/open-url`. The URL is printed on the first line of the
 output; paste it into a Windows browser if the automatic route fails.
 
 **A `WARN ... Error validating CNI config file ... plugin firewall does not
-support config version` line appears.** Harmless noise from Podman 3.x on every
-network operation. The bridge network works; see
-[host-requirements.md](host-requirements.md).
+support config version` line appears.** The Make targets filter this now. If
+you see it from a raw `podman-compose` command, it is a Podman 3.x false alarm:
+one optional plugin is skipped while the plugins that carry traffic load
+normally. [host-requirements.md](host-requirements.md) explains it, and
+`VERBOSE=1 make up` shows the unfiltered output.
 
 **The browser shows "failed to connect".** The desktop takes a few seconds to
 start. Check `docker compose ps` for the health status and `make logs` for

@@ -13,6 +13,10 @@ DETECTED := $(shell ./scripts/compose-command --make 2>/dev/null)
 ENGINE ?= $(firstword $(DETECTED))
 COMPOSE ?= $(wordlist 2,99,$(DETECTED))
 
+# Two Podman 3.x warnings are false alarms for this project; run-quiet drops
+# exactly those and passes everything else through.  VERBOSE=1 disables it.
+QUIET := ./scripts/run-quiet
+
 SERVICE ?= desktop
 ROS_DISTRO ?= lyrical
 NOVNC_PORT ?= 6080
@@ -23,7 +27,7 @@ URL := http://localhost:$(NOVNC_PORT)
 # Short flags and -T keep this working across docker compose, podman compose,
 # and podman-compose; long-running programs are backgrounded inside the
 # container rather than with `exec --detach`, which podman-compose lacks.
-DESKTOP_EXEC = $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash -lc
+DESKTOP_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash -lc
 
 .PHONY: help engine doctor require-engine build up open shell turtlesim teleop logs ps down reset test lint digest
 
@@ -66,7 +70,7 @@ build: require-engine
 	$(COMPOSE) build
 
 up: require-engine
-	$(COMPOSE) up -d
+	$(QUIET) $(COMPOSE) up -d
 	@echo
 	@echo "Desktop starting. Open $(URL)/vnc.html?autoconnect=1&resize=remote"
 	@echo 'Right-click the desktop for the turtlesim menu, or run "make turtlesim".'
@@ -96,10 +100,10 @@ logs: require-engine
 	    exit 1; }
 
 ps: require-engine
-	$(COMPOSE) ps
+	$(QUIET) $(COMPOSE) ps
 
 down: require-engine
-	$(COMPOSE) down
+	$(QUIET) $(COMPOSE) down
 
 # Destructive: prints exactly what will be removed and requires confirmation.
 reset: require-engine
@@ -107,10 +111,10 @@ reset: require-engine
 	@echo '  ros2-tutorials_ros-workspace   (src/, build/, install/, log/)'
 	@echo '  ros2-tutorials_ros-home        (shell history, rosdep cache, settings)'
 	@if [ "$(YES)" = "1" ]; then \
-	    $(COMPOSE) down -v --remove-orphans; \
+	    $(QUIET) $(COMPOSE) down -v --remove-orphans; \
 	else \
 	    printf 'Type "delete" to confirm: '; read answer; \
-	    if [ "$$answer" = "delete" ]; then $(COMPOSE) down -v --remove-orphans; \
+	    if [ "$$answer" = "delete" ]; then $(QUIET) $(COMPOSE) down -v --remove-orphans; \
 	    else echo 'aborted; nothing was removed'; exit 1; fi; \
 	fi
 
@@ -120,7 +124,7 @@ test:
 lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
 	@if command -v shellcheck >/dev/null 2>&1; then \
-	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url && echo 'shellcheck: ok'; \
+	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url scripts/run-quiet && echo 'shellcheck: ok'; \
 	else echo 'shellcheck not installed; skipping script lint'; fi
 
 # Prints the multi-arch index digest for the configured distribution, for

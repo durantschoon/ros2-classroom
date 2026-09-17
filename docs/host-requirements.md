@@ -109,6 +109,30 @@ around* it differ from Docker.
 | `run` prints a container id, not the command's output | Scripted `run` output is unusable | Use `exec` against a running service |
 | `build --pull` becomes `--pull=newer` | Build fails | Already removed; the base is digest-pinned |
 
-A CNI warning — `plugin firewall does not support config version "1.0.0"` — is
-printed on every network operation with Podman 3.4. It is noise: the bridge
-network works, and cross-service DDS discovery was verified over it.
+### The CNI firewall warning
+
+Podman 3.4 prints this on every network operation:
+
+```
+WARN Error validating CNI config file ...: [plugin firewall does not support
+     config version "1.0.0"]
+```
+
+What is actually happening: Podman 3.4 writes its conflist with
+`cniVersion: 1.0.0`, but the `firewall` plugin shipped in Ubuntu 22.04's
+`containernetworking-plugins` advertises only `0.4.0`, so Podman skips that one
+plugin. The `bridge` and `portmap` plugins both support `1.0.0` and load
+normally — and those are the ones carrying traffic, which is why outbound apt
+from inside the container, cross-service DDS discovery, and host port
+publishing on 6080 have all been verified working on exactly this setup.
+
+The Make targets filter this line, and the "/ is not a shared mount" warning,
+through `scripts/run-quiet`. Nothing else is filtered; any other engine output
+reaches you. To see the raw streams:
+
+```sh
+VERBOSE=1 make up
+```
+
+To remove the warning at its source rather than hide it, use Podman 4.4+ (which
+uses Netavark instead of CNI) or a newer `containernetworking-plugins`.
