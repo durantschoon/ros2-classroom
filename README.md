@@ -13,6 +13,8 @@ Versioning is controlled by three committed layers:
   and hash.
 
 The former OCI/Podman implementation remains available on the `podman` branch.
+See [docs/ros-distributions.md](docs/ros-distributions.md) for why this branch
+uses Jazzy rather than the newer Lyrical release.
 
 The environment package is a symlink union: Guix sees one ROS profile entry
 instead of repeatedly traversing ROS's dense propagated-input graph. It
