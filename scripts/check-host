@@ -1,0 +1,63 @@
+#!/bin/sh
+# Report whether this host can build and run the workstation, and print the
+# exact command to fix anything missing.  Changes nothing.
+#
+# Requirements that are NOT checked here live inside the image; see
+# docs/host-requirements.md for why the list is this short.
+set -eu
+
+cd "$(dirname "$0")/.."
+
+status=0
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
+warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
+bad()  { printf '  \033[31mmiss\033[0m  %s\n' "$1"; status=1; }
+fix()  { printf '        -> %s\n' "$1"; }
+
+echo 'Container engine'
+if compose="$(./scripts/compose-command 2>/dev/null)"; then
+    ok "compose: ${compose}"
+    engine="$(./scripts/compose-command --engine)"
+
+    version="$("${engine}" version --format '{{.Client.Version}}' 2>/dev/null \
+        || "${engine}" --version 2>/dev/null | head -1)"
+    ok "engine:  ${engine} ${version}"
+
+    if [ "${engine}" = 'podman' ]; then
+        major="$(printf '%s' "${version}" | tr -cd '0-9.\n' | cut -d. -f1)"
+        if [ -n "${major}" ] && [ "${major}" -lt 4 ] 2>/dev/null; then
+            warn "podman ${version} predates \`podman compose\`; using podman-compose"
+            fix 'pip install --user -r requirements-host.txt   (already satisfied)'
+        fi
+        if "${engine}" info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qi true; then
+            ok 'podman is running rootless'
+        else
+            warn 'podman is running as root; rootless is recommended'
+        fi
+    fi
+else
+    bad 'no working docker or podman compose'
+    ./scripts/compose-command --explain | sed 's/^/        /'
+    fix 'see docs/host-requirements.md'
+fi
+
+echo
+echo 'Resources'
+if disk_kb="$(df -Pk . 2>/dev/null | awk 'NR==2 {print $4}')"; then
+    disk_gb=$((disk_kb / 1024 / 1024))
+    if [ "${disk_gb}" -ge 15 ]; then ok "disk free: ${disk_gb} GB"
+    else warn "disk free: ${disk_gb} GB (15 GB recommended)"; fi
+fi
+if mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null)"; then
+    mem_gb=$((mem_kb / 1024 / 1024))
+    if [ "${mem_gb}" -ge 4 ]; then ok "memory: ${mem_gb} GB"
+    else warn "memory: ${mem_gb} GB (4 GB recommended)"; fi
+fi
+
+echo
+if [ "${status}" -eq 0 ]; then
+    echo 'Ready: run `make build`, then `make up`.'
+else
+    echo 'Not ready; see docs/host-requirements.md.'
+fi
+exit "${status}"

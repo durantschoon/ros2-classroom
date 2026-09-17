@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="ROS 2">
+    <item label="Terminal">
+      <action name="Execute">
+        <command>xterm -fa 'DejaVu Sans Mono' -fs 11 -bg black -fg white -e bash -l</command>
+      </action>
+    </item>
+    <separator label="Turtlesim"/>
+    <item label="turtlesim_node">
+      <action name="Execute">
+        <command>bash -lc 'ros2 run turtlesim turtlesim_node'</command>
+      </action>
+    </item>
+    <item label="turtle_teleop_key">
+      <action name="Execute">
+        <command>xterm -title 'teleop (arrow keys)' -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key'</command>
+      </action>
+    </item>
+    <separator label="Tools"/>
+    <item label="rqt">
+      <action name="Execute">
+        <command>bash -lc 'rqt'</command>
+      </action>
+    </item>
+    <item label="RViz 2">
+      <action name="Execute">
+        <command>bash -lc 'rviz2'</command>
+      </action>
+    </item>
+    <separator/>
+    <item label="Restart Openbox">
+      <action name="Restart"/>
+    </item>
+  </menu>
+</openbox_menu>

@@ -1,13 +1,23 @@
 # ROS 2 distribution choice
 
-## Current choice: Jazzy
+The two branches use different ROS releases, for reasons that come down to how
+each one obtains ROS.
 
-This project uses ROS 2 Jazzy Jalisco. It is an LTS release supported through
+## This branch (default): Lyrical
+
+The container image installs ROS from the official `packages.ros.org` apt
+repository, where ROS 2 Lyrical Luth is published for Ubuntu 26.04 (Resolute)
+on both amd64 and arm64. Nothing has to be ported, so the default tracks the
+current LTS.
+
+## The `guix` branch: Jazzy
+
+That branch uses ROS 2 Jazzy Jalisco. It is an LTS release supported through
 May 2029, is newer than Humble, and is the ROS distribution packaged by the
 pinned SystoleOS Guix source. For turtlesim, Jazzy provides the familiar ROS 2
 tutorial workflow while keeping every source and toolchain input under Guix.
 
-## Why not Lyrical yet?
+### Why that branch cannot simply move to Lyrical
 
 ROS 2 Lyrical Luth is the latest ROS 2 release as of September 2026 and is an
 LTS supported through May 2031. The pinned SystoleOS checkout does not package
@@ -26,6 +36,18 @@ upgrade:
    dependency-upgrade commit.
 
 Until that work exists upstream or is completed locally, Jazzy is the newest
-native Guix option available here. The `podman` branch can remain a fallback
-for testing a newer official Ubuntu-based ROS image without weakening the
-versioned native environment on `main`.
+native Guix option available there. This branch can be used to try a newer
+official Ubuntu-based ROS image without weakening the versioned native
+environment on `guix`.
+
+## Why the two disagree
+
+They answer different questions. The `guix` branch asks "what can be built
+reproducibly from source under Guix?" This branch asks "what can a learner run
+on any laptop today?"
+
+The base image here is pinned by digest rather than by source hash. That is a
+weaker reproducibility guarantee than Guix provides — the same digest yields the
+same base layers, but the apt layer resolves against a moving repository. It is
+the right trade for a tutorial environment, and the reason the `guix` branch
+keeps the stronger guarantee for the native build.

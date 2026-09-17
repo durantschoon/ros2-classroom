@@ -1,0 +1,16 @@
+#!/bin/sh
+# Openbox autostart for the ROS tutorial workstation.
+#
+# A terminal is opened so the desktop is immediately usable.  Turtlesim is
+# deliberately NOT supervised here: a learner who closes the window should get
+# their desktop back, not an endlessly respawning simulator.  It is one click
+# away in the root menu (right-click the desktop) and one command away in the
+# terminal.
+
+xsetroot -solid '#2e3440' 2>/dev/null || true
+
+xterm -title 'ROS 2 tutorial shell' \
+      -geometry 100x28+40+40 \
+      -fa 'DejaVu Sans Mono' -fs 11 \
+      -bg black -fg white \
+      -e bash -l &

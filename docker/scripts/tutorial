@@ -1,0 +1,56 @@
+#!/bin/bash
+# Thin convenience layer over the standard ROS tutorial flow.
+#
+# Deliberately small: it wraps clone + rosdep + colcon so a learner is not
+# blocked on typing four commands correctly, and it prints the plain commands
+# it runs so the real workflow stays visible.
+set -euo pipefail
+
+WORKSPACE="${WORKSPACE:-/workspace}"
+
+usage() {
+    cat >&2 <<USAGE
+usage:
+  tutorial clone URL [DIRECTORY]   Clone a repository into ${WORKSPACE}/src
+  tutorial deps                    rosdep install for everything in src/
+  tutorial build [PACKAGE...]      colcon build (optionally --packages-select)
+  tutorial list                    Show repositories currently in src/
+USAGE
+    exit 2
+}
+
+run() { printf '+ %s\n' "$*" >&2; "$@"; }
+
+[ "$#" -ge 1 ] || usage
+command="$1"; shift
+
+case "${command}" in
+    clone)
+        [ "$#" -ge 1 ] || usage
+        init-workspace >/dev/null
+        run git -C "${WORKSPACE}/src" clone "$@"
+        echo "cloned into ${WORKSPACE}/src; next: tutorial deps && tutorial build"
+        ;;
+    deps)
+        run rosdep update --rosdistro "${ROS_DISTRO}"
+        run rosdep install --from-paths "${WORKSPACE}/src" --ignore-src \
+            --rosdistro "${ROS_DISTRO}" -r -y
+        ;;
+    build)
+        cd "${WORKSPACE}"
+        if [ "$#" -gt 0 ]; then
+            run colcon build --symlink-install --packages-select "$@"
+        else
+            run colcon build --symlink-install
+        fi
+        echo "built; open a new shell or: source ${WORKSPACE}/install/setup.bash"
+        ;;
+    list)
+        find "${WORKSPACE}/src" -maxdepth 2 -name .git -type d -printf '%h\n' 2>/dev/null \
+            | sed "s|^${WORKSPACE}/src/||" \
+            | sort || true
+        ;;
+    *)
+        usage
+        ;;
+esac

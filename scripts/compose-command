@@ -1,0 +1,64 @@
+#!/bin/sh
+# Print the compose command to use on this host, or exit non-zero if there is
+# none.  Docker is preferred when both are present, because it is what the
+# documentation and CI use; Podman is a first-class fallback.
+#
+#   $(scripts/compose-command)            -> e.g. "docker compose"
+#   scripts/compose-command --engine      -> e.g. "docker"
+#   scripts/compose-command --make        -> "docker docker compose" (engine, then command)
+#   scripts/compose-command --explain     -> human-readable detection result
+set -eu
+
+mode="${1:-command}"
+
+engine=''
+compose=''
+
+# `docker compose version` also fails when the CLI exists but no daemon is
+# reachable, which is exactly the Docker Desktop "WSL integration off" case.
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    engine='docker'
+    compose='docker compose'
+elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
+    engine='podman'
+    compose='podman compose'
+elif command -v podman-compose >/dev/null 2>&1 && podman-compose --version >/dev/null 2>&1; then
+    engine='podman'
+    compose='podman-compose'
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose --version >/dev/null 2>&1; then
+    engine='docker'
+    compose='docker-compose'
+fi
+
+if [ -z "${compose}" ]; then
+    case "${mode}" in
+        --explain)
+            echo 'No working container engine found.'
+            echo
+            if command -v docker >/dev/null 2>&1; then
+                echo '  docker: the CLI exists but no daemon answered.'
+                echo '          On Windows/WSL, enable Docker Desktop >'
+                echo '          Settings > Resources > WSL Integration for this distro.'
+            else
+                echo '  docker: not installed.'
+            fi
+            if command -v podman >/dev/null 2>&1; then
+                echo '  podman: installed, but neither "podman compose" nor'
+                echo '          podman-compose is available. Install podman-compose.'
+            else
+                echo '  podman: not installed.'
+            fi
+            ;;
+        *)
+            echo 'no working docker or podman compose found; run: scripts/compose-command --explain' >&2
+            ;;
+    esac
+    exit 1
+fi
+
+case "${mode}" in
+    --engine)  echo "${engine}" ;;
+    --make)    echo "${engine} ${compose}" ;;
+    --explain) echo "using ${compose} (engine: ${engine})" ;;
+    *)         echo "${compose}" ;;
+esac

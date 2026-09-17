@@ -1,5 +1,11 @@
 # Cross-platform ROS tutorial workstation: implementation plan
 
+> **Status: implemented.** This document is kept as the record of what was
+> planned. Two things changed during implementation: this work became the
+> default branch (the native Guix implementation moved to the `guix` branch),
+> and Podman was added as a supported engine alongside Docker. Deviations from
+> the plan are noted in the README and the docs it links.
+
 ## Objective
 
 Build one Linux container image that works through Docker Desktop or Docker

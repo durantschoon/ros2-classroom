@@ -1,2 +1,10 @@
 .#*
 *~
+
+# Local configuration; .env.example is the committed template.
+.env
+
+# Optional compose overrides documented in docs/hardware-and-gpu.md
+compose.gpu.yaml
+compose.bind.yaml
+workspace-src/

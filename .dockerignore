@@ -1,0 +1,13 @@
+.git
+.github
+.gitignore
+.env
+docs
+README.md
+LICENSE*
+*.md
+!docker/**/*.md
+# Nothing under scripts/ or requirements-host.txt is COPYed into the image;
+# they are host-side tooling.
+scripts
+requirements-host.txt

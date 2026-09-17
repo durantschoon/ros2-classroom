@@ -1,0 +1,26 @@
+#!/bin/sh
+# Print the multi-architecture index digest of ros:<distro>-ros-base.
+#
+# Used by `make digest` when buildx is unavailable.  Only the registry API is
+# needed, so this works before anything has been pulled.
+set -eu
+
+distro="${1:-lyrical}"
+repo="library/ros"
+tag="${distro}-ros-base"
+
+token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" \
+    | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+[ -n "${token}" ] || { echo "could not obtain a registry token" >&2; exit 1; }
+
+digest=$(curl -fsS -I \
+    -H "Authorization: Bearer ${token}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+    "https://registry-1.docker.io/v2/${repo}/manifests/${tag}" \
+    | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p')
+
+[ -n "${digest}" ] || { echo "no digest for ros:${tag}" >&2; exit 1; }
+
+echo "${digest}"

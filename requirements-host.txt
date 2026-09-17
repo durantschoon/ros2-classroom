@@ -1,0 +1,15 @@
+# Host tooling that cannot live inside the container.
+#
+# Everything ROS-related is in the image; this file covers only what has to
+# exist on the host before the image can be built or run.
+#
+#   pip install --user -r requirements-host.txt
+#
+# You need this ONLY when using Podman without a built-in `compose` subcommand
+# (Podman < 4.4, which includes the version in Ubuntu 22.04).  Docker users and
+# Podman 4.4+ users can ignore this file entirely; `make engine` tells you which
+# case you are in.
+
+# Compose implementation for Podman.  1.6.0 is what this project is tested with
+# against Podman 3.4; newer releases generally work but flag coverage varies.
+podman-compose>=1.6.0,<2

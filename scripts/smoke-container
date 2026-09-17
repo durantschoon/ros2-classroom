@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# Automated smoke tests for the ROS 2 tutorial workstation.
+#
+# These are the claims the README makes, checked against a real container:
+# turtlesim runs, the browser desktop answers, packages install, a source
+# package builds, and work survives a container recreation.
+#
+# The container engine is auto-detected: Docker when it is available, otherwise
+# rootless Podman.  Override with COMPOSE=... if you need a specific one.  The
+# suite is validated against docker compose in CI; the Podman path is
+# best-effort, because podman-compose's flag coverage varies by version.
+#
+# Usage: ./scripts/smoke-container [--keep]
+#   --keep   leave containers and volumes in place for inspection
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ -z "${COMPOSE:-}" ]; then
+    if ! COMPOSE="$(./scripts/compose-command)"; then
+        ./scripts/compose-command --explain
+        exit 1
+    fi
+fi
+echo "using: ${COMPOSE}"
+NOVNC_PORT="${NOVNC_PORT:-6080}"
+KEEP=0
+[ "${1:-}" = "--keep" ] && KEEP=1
+
+passed=0
+failed=0
+declare -a failures=()
+
+ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; passed=$((passed + 1)); }
+bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; failed=$((failed + 1)); failures+=("$1"); }
+step() { printf '\n== %s\n' "$1"; }
+
+check() {
+    local name="$1"; shift
+    if "$@" >/dev/null 2>&1; then ok "${name}"; else bad "${name}"; fi
+}
+
+# Run a login-shell command in the desktop container as the workstation user.
+in_desktop() {
+    $COMPOSE exec -T -u ros -e DISPLAY=:1 desktop bash -lc "$1"
+}
+
+cleanup() {
+    local status=$?
+    if [ "${KEEP}" -eq 1 ]; then
+        echo; echo 'containers kept (--keep); remove them with: make reset YES=1'
+    else
+        echo; echo '== cleaning up'
+        $COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
+    fi
+    exit "${status}"
+}
+trap cleanup EXIT
+
+step 'Build'
+$COMPOSE build
+ok 'image builds'
+
+step 'Start the desktop'
+$COMPOSE up -d desktop
+
+# Readiness is measured by the thing the rest of the suite needs -- exec
+# working -- rather than by `ps <service>`, which podman-compose does not
+# accept, and which would in any case only report that a container exists.
+ready=0
+for _ in $(seq 1 30); do
+    if in_desktop true >/dev/null 2>&1; then ready=1; break; fi
+    sleep 2
+done
+if [ "${ready}" -eq 1 ]; then
+    ok 'desktop container accepts commands'
+else
+    bad 'desktop container never became ready'
+    $COMPOSE logs desktop 2>&1 | tail -20
+    exit 1
+fi
+
+step 'Image and environment'
+# Read the image's configured user directly: podman-compose's `run` prints a
+# container id rather than the command's output, so a runtime probe is not
+# portable here.
+IMAGE="${IMAGE_NAME:-ros2-tutorials}:${ROS_DISTRO:-lyrical}"
+ENGINE="$(./scripts/compose-command --engine)"
+image_user="$($ENGINE image inspect --format '{{.Config.User}}' "${IMAGE}" 2>/dev/null \
+    || $ENGINE image inspect --format '{{.Config.User}}' "localhost/${IMAGE}" 2>/dev/null \
+    || true)"
+if [ "${image_user}" = 'ros' ]; then
+    ok 'the image defaults to the non-root ros user'
+else
+    bad "the image default user is '${image_user:-unset}', not ros"
+fi
+if [ "$($COMPOSE exec -T desktop ps -o user= -C Xvfb 2>/dev/null | tr -d ' \r' | head -1)" = 'ros' ]; then
+    ok 'desktop programs run as the non-root ros user'
+else
+    bad 'desktop programs are not running as ros'
+fi
+check 'ROS_DISTRO is set'       in_desktop '[ -n "$ROS_DISTRO" ]'
+check 'ros2 is on PATH'         in_desktop 'command -v ros2'
+check 'rosdep is on PATH'       in_desktop 'command -v rosdep'
+check 'colcon is on PATH'       in_desktop 'command -v colcon'
+
+step 'Turtlesim'
+executables="$(in_desktop 'ros2 pkg executables turtlesim' || true)"
+if grep -q 'turtlesim_node' <<<"${executables}" && grep -q 'turtle_teleop_key' <<<"${executables}"; then
+    ok 'turtlesim_node and turtle_teleop_key are installed'
+else
+    bad "turtlesim executables missing (got: ${executables})"
+fi
+
+# Start turtlesim on the container's own X display and require it to survive.
+if in_desktop 'nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 & sleep 5; pgrep -f turtlesim_node'; then
+    ok 'turtlesim stays alive for 5s on the virtual display'
+    in_desktop 'pkill -f turtlesim_node' >/dev/null 2>&1 || true
+else
+    bad "turtlesim exited early: $(in_desktop 'cat /tmp/turtlesim.log' 2>/dev/null | tail -5)"
+fi
+
+step 'Browser desktop'
+if $COMPOSE exec -T desktop curl --fail --silent --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors \
+        "http://127.0.0.1:${NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
+    ok 'noVNC answers inside the container'
+else
+    bad 'noVNC did not answer inside the container'
+fi
+
+if curl --fail --silent --max-time 10 --retry 6 --retry-delay 5 --retry-all-errors \
+        "http://127.0.0.1:${NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
+    ok "noVNC answers on the host at http://localhost:${NOVNC_PORT}"
+else
+    bad "noVNC did not answer on the host port ${NOVNC_PORT}"
+fi
+
+step 'Cross-service DDS discovery'
+# Subscribe from the desktop container to a topic published by a separate
+# compose service.  This asserts the same property as running the bundled
+# talker/listener pair, but reads the message through `exec` instead of
+# `compose logs`: podman-compose needs --profile to address a profile service,
+# and its `logs` passes a --color flag that Podman 3.x rejects.
+$COMPOSE --profile demo up -d talker
+sleep 10
+if in_desktop 'timeout 30 ros2 topic echo --once /chatter' 2>/dev/null \
+        | grep -q 'hello from the talker service'; then
+    ok 'a node in one service receives messages from another service'
+else
+    bad 'no message crossed between compose services'
+fi
+$COMPOSE --profile demo stop talker >/dev/null 2>&1 || true
+
+step 'Package installation helper'
+if in_desktop 'install-ros-packages demo-nodes-cpp' >/dev/null 2>&1; then
+    ok 'install-ros-packages installs a ROS short name'
+    check 'installed package is runnable' in_desktop 'ros2 pkg executables demo_nodes_cpp | grep -q talker'
+else
+    bad 'install-ros-packages failed for demo-nodes-cpp'
+fi
+if in_desktop 'install-ros-packages definitely-not-a-package' >/dev/null 2>&1; then
+    bad 'install-ros-packages silently accepted a missing package'
+else
+    ok 'install-ros-packages fails loudly on a missing package'
+fi
+
+step 'Source workspace build'
+build_script='
+set -e
+init-workspace >/dev/null
+mkdir -p /workspace/src/smoke_pkg
+cd /workspace/src/smoke_pkg
+cat > package.xml <<XML
+<?xml version="1.0"?>
+<package format="3">
+  <name>smoke_pkg</name>
+  <version>0.0.1</version>
+  <description>Smoke test package</description>
+  <maintainer email="smoke@example.com">smoke</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
+XML
+cat > CMakeLists.txt <<CMAKE
+cmake_minimum_required(VERSION 3.16)
+project(smoke_pkg)
+find_package(ament_cmake REQUIRED)
+add_executable(smoke_node src/smoke_node.cpp)
+install(TARGETS smoke_node DESTINATION lib/\${PROJECT_NAME})
+ament_package()
+CMAKE
+mkdir -p src
+cat > src/smoke_node.cpp <<CPP
+#include <cstdio>
+int main() { std::printf("smoke_pkg overlay works\n"); return 0; }
+CPP
+cd /workspace
+rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -r -y >/dev/null 2>&1 || true
+colcon build --symlink-install --packages-select smoke_pkg
+'
+if in_desktop "${build_script}"; then
+    ok 'colcon builds a source package in the persistent workspace'
+else
+    bad 'colcon build of the smoke package failed'
+fi
+
+if in_desktop 'ros2 run smoke_pkg smoke_node' | grep -q 'smoke_pkg overlay works'; then
+    ok 'new shells source the workspace overlay automatically'
+else
+    bad 'the built package did not run from an automatically sourced overlay'
+fi
+
+step 'Persistence across container recreation'
+$COMPOSE up -d --force-recreate desktop
+sleep 5
+if in_desktop '[ -f /workspace/src/smoke_pkg/package.xml ]'; then
+    ok 'workspace source survives container recreation'
+else
+    bad 'workspace source was lost when the container was recreated'
+fi
+if in_desktop 'ros2 run smoke_pkg smoke_node' | grep -q 'smoke_pkg overlay works'; then
+    ok 'built overlay survives container recreation'
+else
+    bad 'built overlay was lost when the container was recreated'
+fi
+
+step 'Result'
+printf '%d passed, %d failed\n' "${passed}" "${failed}"
+if [ "${failed}" -gt 0 ]; then
+    printf 'failed checks:\n'
+    printf '  - %s\n' "${failures[@]}"
+    exit 1
+fi

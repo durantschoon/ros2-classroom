@@ -1,3 +1,0 @@
-[submodule "vendor/guix-systole"]
-	path = vendor/guix-systole
-	url = https://github.com/SystoleOS/guix-systole.git

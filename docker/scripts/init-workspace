@@ -1,0 +1,29 @@
+#!/bin/bash
+# Create the colcon workspace layout without ever overwriting existing work.
+set -euo pipefail
+
+WORKSPACE="${WORKSPACE:-/workspace}"
+marker="${WORKSPACE}/.ros-workstation"
+
+mkdir -p "${WORKSPACE}/src"
+
+if [ ! -e "${marker}" ]; then
+    cat > "${marker}" <<MARKER
+# ROS 2 tutorial workstation
+# Created: $(date --iso-8601=seconds)
+# Distribution: ${ROS_DISTRO:-unknown}
+#
+# This directory is a colcon workspace on a persistent volume.  Clone tutorial
+# repositories into src/, then:
+#   rosdep install --from-paths src --ignore-src --rosdistro "\$ROS_DISTRO" -r -y
+#   colcon build --symlink-install
+# New shells source install/setup.bash automatically once it exists.
+MARKER
+    echo "initialized workspace at ${WORKSPACE}"
+else
+    echo "workspace already initialized at ${WORKSPACE} (left untouched)"
+fi
+
+for dir in build install log; do
+    [ -d "${WORKSPACE}/${dir}" ] || echo "note: ${WORKSPACE}/${dir} appears after the first colcon build"
+done

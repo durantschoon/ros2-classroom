@@ -1,0 +1,74 @@
+# ROS 2 cross-platform tutorial workstation.
+#
+# One image, two services: a browser desktop and an on-demand shell.  Both use
+# the same named volumes, so work done in either persists.  Nothing here
+# depends on a host X server, host networking, or a Linux-only device path.
+
+name: ros2-tutorials
+
+x-workstation: &workstation
+  build:
+    context: .
+    args:
+      ROS_DISTRO: ${ROS_DISTRO:-lyrical}
+      ROS_BASE_DIGEST: ${ROS_BASE_DIGEST:-sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806}
+      EXTRA_ROS_PACKAGES: ${EXTRA_ROS_PACKAGES:-}
+      EXTRA_APT_PACKAGES: ${EXTRA_APT_PACKAGES:-}
+  image: ${IMAGE_NAME:-ros2-tutorials}:${ROS_DISTRO:-lyrical}
+  environment:
+    # A non-default domain keeps this workstation out of unrelated ROS sessions
+    # that may be running on the same machine or LAN.
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+    # Successor to ROS_LOCALHOST_ONLY=0: allow discovery across the compose
+    # network without broadcasting beyond it.
+    ROS_AUTOMATIC_DISCOVERY_RANGE: ${ROS_AUTOMATIC_DISCOVERY_RANGE:-SUBNET}
+    SCREEN_GEOMETRY: ${SCREEN_GEOMETRY:-1600x900x24}
+    # Empty means no VNC password.  Acceptable only while noVNC is published to
+    # loopback; see docs/cross-platform.md before changing the port binding.
+    VNC_PASSWORD: ${VNC_PASSWORD:-}
+  volumes:
+    - ros-workspace:/workspace
+    - ros-home:/home/ros
+  networks:
+    - ros
+
+services:
+  # The desktop: Xvfb + Openbox + x11vnc + noVNC under supervisor.
+  desktop:
+    <<: *workstation
+    # supervisor manages Xvfb, Openbox, x11vnc, and noVNC, starting each of them
+    # as the `ros` user; supervisor itself needs root for its socket and logs.
+    user: "root"
+    ports:
+      # Loopback only.  Binding to 0.0.0.0 exposes an unauthenticated desktop.
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+    stop_grace_period: 10s
+
+  # On-demand ROS shell sharing the desktop's volumes and network:
+  #   docker compose run --rm shell
+  shell:
+    <<: *workstation
+    profiles: ["cli"]
+    command: ["bash", "-l"]
+    stdin_open: true
+    tty: true
+
+  # Distributed-node tutorials: two services, one compose network.  Started
+  # with `docker compose --profile demo up`.
+  talker:
+    <<: *workstation
+    profiles: ["demo"]
+    command: ["ros2", "topic", "pub", "--rate", "1", "/chatter", "std_msgs/msg/String", "{data: 'hello from the talker service'}"]
+
+  listener:
+    <<: *workstation
+    profiles: ["demo"]
+    command: ["ros2", "topic", "echo", "/chatter"]
+
+volumes:
+  ros-workspace:
+  ros-home:
+
+networks:
+  ros:
+    driver: bridge

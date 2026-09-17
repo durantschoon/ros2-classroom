@@ -1,0 +1,51 @@
+#!/bin/bash
+# Install extra packages into the RUNNING container.
+#
+# Short names are expanded to ros-${ROS_DISTRO}-<name>; anything containing a
+# slash-free full Debian name that already exists is installed as given.
+# Missing packages are an error, never a silent skip.
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+    cat >&2 <<USAGE
+usage: install-ros-packages PACKAGE [PACKAGE...]
+
+  install-ros-packages demo-nodes-cpp image-tools   # ROS short names
+  install-ros-packages ros-${ROS_DISTRO:-lyrical}-rqt-graph        # full Debian name
+  install-ros-packages python3-pytest               # plain Ubuntu package
+USAGE
+    exit 2
+fi
+
+if [ -z "${ROS_DISTRO:-}" ]; then
+    echo "ROS_DISTRO is not set; this script must run inside the workstation image" >&2
+    exit 1
+fi
+
+sudo apt-get update
+
+resolved=()
+for name in "$@"; do
+    candidate="ros-${ROS_DISTRO}-${name//_/-}"
+    if [[ "${name}" == ros-* || "${name}" == python3-* || "${name}" == lib* ]]; then
+        candidate="${name}"
+    elif ! apt-cache show "${candidate}" >/dev/null 2>&1; then
+        # Not a ROS package name; fall back to the literal name and let apt
+        # report the failure if that does not exist either.
+        candidate="${name}"
+    fi
+    resolved+=("${candidate}")
+done
+
+printf 'installing: %s\n' "${resolved[*]}"
+sudo apt-get install --yes --no-install-recommends "${resolved[@]}"
+
+cat <<'NOTE'
+
+These packages live in the container's writable layer.  They survive `stop`
+and `start`, but a container recreation (`docker compose up --force-recreate`,
+`down`, or an image rebuild) discards them.
+
+To keep them permanently, add them to EXTRA_ROS_PACKAGES / EXTRA_APT_PACKAGES
+in .env and run `make build` again.  See docs/package-management.md.
+NOTE
