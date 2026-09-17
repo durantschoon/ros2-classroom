@@ -81,6 +81,15 @@ If you clone into a Windows path and run from WSL, keep the repository inside
 the WSL filesystem (`~/...`, not `/mnt/c/...`). Build context reads across the
 9p mount are slow enough to be noticeable.
 
+**Opening the desktop from WSL.** `make open` detects WSL and hands the URL to
+Windows via `wslview`, then `powershell.exe Start-Process`, then
+`explorer.exe`. It deliberately does not use `xdg-open` there: WSL distros
+usually have a mime database that names a browser which is not installed, and
+`xdg-open` then falls through to a *text editor*, so the noVNC page appears as
+HTML source instead of a desktop. The URL is always printed first, so you can
+paste it into a Windows browser regardless — `localhost:6080` reaches the
+container through WSL 2's port forwarding.
+
 ## macOS notes
 
 Everything runs in Docker Desktop's Linux VM, so the image must match the VM's
@@ -150,6 +159,15 @@ Linux and inside Docker Desktop's VM, which is exactly the portability problem
 this branch exists to remove.
 
 ## Troubleshooting
+
+**`make open` opened an editor, or nothing.** That was a bug in WSL handling,
+fixed by `scripts/open-url`. The URL is printed on the first line of the
+output; paste it into a Windows browser if the automatic route fails.
+
+**A `WARN ... Error validating CNI config file ... plugin firewall does not
+support config version` line appears.** Harmless noise from Podman 3.x on every
+network operation. The bridge network works; see
+[host-requirements.md](host-requirements.md).
 
 **The browser shows "failed to connect".** The desktop takes a few seconds to
 start. Check `docker compose ps` for the health status and `make logs` for

@@ -72,10 +72,7 @@ up: require-engine
 	@echo 'Right-click the desktop for the turtlesim menu, or run "make turtlesim".'
 
 open:
-	@if command -v xdg-open >/dev/null 2>&1; then xdg-open '$(URL)/vnc.html?autoconnect=1&resize=remote'; \
-	elif command -v open >/dev/null 2>&1; then open '$(URL)/vnc.html?autoconnect=1&resize=remote'; \
-	elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command "Start-Process '$(URL)/vnc.html?autoconnect=1&resize=remote'"; \
-	else echo 'Open this in a browser: $(URL)/vnc.html?autoconnect=1&resize=remote'; fi
+	@./scripts/open-url '$(URL)/vnc.html?autoconnect=1&resize=remote'
 
 # A one-off container, so it works whether or not the desktop is running.
 shell: require-engine
@@ -123,7 +120,7 @@ test:
 lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
 	@if command -v shellcheck >/dev/null 2>&1; then \
-	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host && echo 'shellcheck: ok'; \
+	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url && echo 'shellcheck: ok'; \
 	else echo 'shellcheck not installed; skipping script lint'; fi
 
 # Prints the multi-arch index digest for the configured distribution, for

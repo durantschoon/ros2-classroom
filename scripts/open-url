@@ -1,0 +1,56 @@
+#!/bin/sh
+# Open a URL in the user's real browser, or print it if that cannot be done.
+#
+# The URL is always printed: opening a browser is a convenience, and every
+# failure mode here should still leave the user able to copy the address.
+#
+# WSL is handled before xdg-open on purpose.  Under WSL, xdg-open consults the
+# Linux mime database, which commonly names a browser that is not installed
+# (firefox.desktop on a bare Ubuntu image) and then falls through to a text
+# editor -- so the page "opens" in an editor instead of a browser.
+set -eu
+
+url="${1:?usage: open-url URL}"
+
+printf '%s\n' "${url}"
+
+is_wsl() {
+    [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+    [ -r /proc/version ] && grep -qi microsoft /proc/version && return 0
+    return 1
+}
+
+if [ -n "${BROWSER:-}" ] && command -v "${BROWSER}" >/dev/null 2>&1; then
+    exec "${BROWSER}" "${url}"
+fi
+
+if is_wsl; then
+    # wslu's wslview is the tidiest route when it is installed.
+    if command -v wslview >/dev/null 2>&1; then
+        exec wslview "${url}"
+    fi
+    if command -v powershell.exe >/dev/null 2>&1; then
+        exec powershell.exe -NoProfile -Command "Start-Process '${url}'"
+    fi
+    if command -v explorer.exe >/dev/null 2>&1; then
+        # explorer.exe exits non-zero even when it succeeds.
+        explorer.exe "${url}" || true
+        exit 0
+    fi
+    echo 'Could not reach a Windows browser; open the address above yourself.' >&2
+    exit 0
+fi
+
+case "$(uname -s)" in
+    Darwin)
+        command -v open >/dev/null 2>&1 && exec open "${url}"
+        ;;
+    *)
+        if command -v xdg-open >/dev/null 2>&1; then
+            exec xdg-open "${url}"
+        fi
+        ;;
+esac
+
+echo 'No browser opener found; open the address above yourself.' >&2
+exit 0
