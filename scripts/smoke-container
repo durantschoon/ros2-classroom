@@ -316,6 +316,116 @@ else
     bad "make inside the container did not explain itself (exit ${guard_status})"
 fi
 
+step 'Container helpers: tutorial, init-workspace, pkg refusals'
+# `pkg` and `tutorial` are what a student types inside the desktop, and the
+# workspace helpers are append-only by design (docs/stages/README.md, guardrail
+# 7).  Commands that are expected to fail are captured with `|| status=$?` so
+# they do not trip this script's own `set -e`.
+
+in_desktop 'init-workspace' >/dev/null 2>&1 || true
+marker_before="$(in_desktop 'md5sum /workspace/.ros-workstation' 2>/dev/null | awk '{print $1}')"
+again_status=0
+again_out="$(in_desktop 'init-workspace' 2>&1)" || again_status=$?
+marker_after="$(in_desktop 'md5sum /workspace/.ros-workstation' 2>/dev/null | awk '{print $1}')"
+if [ "${again_status}" -eq 0 ] && grep -q 'already initialized' <<<"${again_out}"; then
+    ok 'a second init-workspace reports the workspace is already initialized'
+else
+    bad "init-workspace did not report an existing workspace (exit ${again_status})"
+fi
+if [ -n "${marker_before}" ] && [ "${marker_before}" = "${marker_after}" ]; then
+    ok 'init-workspace leaves the existing workspace marker untouched'
+else
+    bad "the workspace marker changed: ${marker_before:-missing} -> ${marker_after:-missing}"
+fi
+
+tutorial_status=0
+tutorial_usage="$(in_desktop 'tutorial' 2>&1)" || tutorial_status=$?
+if [ "${tutorial_status}" -eq 2 ] && grep -qF 'tutorial clone URL [DIRECTORY]' <<<"${tutorial_usage}"; then
+    ok 'tutorial with no arguments exits 2 and prints usage'
+else
+    bad "tutorial with no arguments: exit ${tutorial_status}, not 2 with usage"
+fi
+
+# A local repository, so the clone needs no network.
+upstream_script='
+set -e
+mkdir -p /tmp/smoke-upstream
+cd /tmp/smoke-upstream
+git init -q .
+git config user.email smoke@example.com
+git config user.name smoke
+echo "smoke upstream" > README.md
+git add README.md
+git commit -qm "first commit"
+'
+if in_desktop "${upstream_script}" >/dev/null 2>&1; then
+    clone_status=0
+    clone_out="$(in_desktop 'tutorial clone /tmp/smoke-upstream smoke_clone' 2>&1)" || clone_status=$?
+    if [ "${clone_status}" -eq 0 ] \
+            && grep -q '^+ git -C /workspace/src clone /tmp/smoke-upstream smoke_clone' <<<"${clone_out}"; then
+        ok 'tutorial clone echoes the real git command and succeeds'
+    else
+        bad "tutorial clone failed or did not echo git (exit ${clone_status})"
+    fi
+    check 'the clone lands in /workspace/src' \
+        in_desktop '[ -f /workspace/src/smoke_clone/README.md ]'
+    list_out="$(in_desktop 'tutorial list' 2>&1 || true)"
+    if grep -qx 'smoke_clone' <<<"${list_out}"; then
+        ok 'tutorial list names the cloned repository'
+    else
+        bad "tutorial list did not name the clone (got: $(tr '\n' ' ' <<<"${list_out}"))"
+    fi
+else
+    bad 'could not create a local git repository to clone from'
+fi
+
+# smoke_pkg was created by the source-workspace step above; reuse it rather
+# than building another package.
+tbuild_status=0
+tbuild_out="$(in_desktop 'tutorial build smoke_pkg' 2>&1)" || tbuild_status=$?
+if [ "${tbuild_status}" -eq 0 ] \
+        && grep -q '^+ colcon build --symlink-install --packages-select smoke_pkg' <<<"${tbuild_out}"; then
+    ok 'tutorial build echoes colcon build --packages-select and succeeds'
+else
+    bad "tutorial build smoke_pkg failed (exit ${tbuild_status})"
+fi
+
+pkg_status=0
+pkg_usage="$(in_desktop 'pkg' 2>&1)" || pkg_status=$?
+if [ "${pkg_status}" -eq 2 ] && grep -qF 'pkg new NAME [options]' <<<"${pkg_usage}"; then
+    ok 'pkg with no arguments exits 2 and prints usage'
+else
+    bad "pkg with no arguments: exit ${pkg_status}, not 2 with usage"
+fi
+
+mixed_status=0
+mixed_out="$(in_desktop 'pkg new smoke_bad_msgs --python --interfaces' 2>&1)" || mixed_status=$?
+if [ "${mixed_status}" -eq 1 ] \
+        && grep -q 'interface packages must be ament_cmake' <<<"${mixed_out}"; then
+    ok 'pkg new --python --interfaces is refused with an explanation'
+else
+    bad "pkg new --python --interfaces: exit ${mixed_status}, not 1 with an explanation"
+fi
+check 'the refused interface package was never created' \
+    in_desktop '[ ! -e /workspace/src/smoke_bad_msgs ]'
+
+# Student work is append-only: creating a package that already exists must
+# refuse, and must leave what is there untouched.
+existing_before="$(in_desktop 'md5sum /workspace/src/smoke_pkg/package.xml' 2>/dev/null | awk '{print $1}')"
+clobber_status=0
+clobber_out="$(in_desktop 'pkg new smoke_pkg' 2>&1)" || clobber_status=$?
+existing_after="$(in_desktop 'md5sum /workspace/src/smoke_pkg/package.xml' 2>/dev/null | awk '{print $1}')"
+if [ "${clobber_status}" -ne 0 ] && grep -q 'The directory already exists' <<<"${clobber_out}"; then
+    ok 'pkg new refuses to create a package that already exists'
+else
+    bad "pkg new on an existing package: exit ${clobber_status}, expected a refusal"
+fi
+if [ -n "${existing_before}" ] && [ "${existing_before}" = "${existing_after}" ]; then
+    ok 'the existing package is byte-identical after the refusal'
+else
+    bad "pkg new changed an existing package: ${existing_before:-missing} -> ${existing_after:-missing}"
+fi
+
 step 'Persistence across container recreation'
 $COMPOSE up -d --force-recreate desktop
 sleep 5
