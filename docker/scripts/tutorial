@@ -1,72 +1,202 @@
-#!/bin/bash
-# Thin convenience layer over the standard ROS tutorial flow.
-#
-# Deliberately small: it wraps clone + rosdep + colcon so a learner is not
-# blocked on typing four commands correctly, and it prints the plain commands
-# it runs so the real workflow stays visible.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Thin convenience layer over the standard ROS tutorial flow.
 
-WORKSPACE="${WORKSPACE:-/workspace}"
+Deliberately small: it wraps clone + rosdep + colcon so a learner is not
+blocked on typing four commands correctly, and it prints the plain commands
+it runs so the real workflow stays visible.
+"""
 
-usage() {
-    cat >&2 <<USAGE
-usage:
-  tutorial clone URL [DIRECTORY]   Clone a repository into ${WORKSPACE}/src
-  tutorial deps                    rosdep install for everything in src/
-  tutorial build [PACKAGE...]      colcon build (optionally --packages-select)
-  tutorial list                    Show repositories currently in src/
-USAGE
-    exit 2
+import enum
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Sequence
+
+
+class Command(enum.Enum):
+    """The closed set of subcommands (guardrail 1)."""
+
+    CLONE = "clone"
+    DEPS = "deps"
+    BUILD = "build"
+    LIST = "list"
+
+
+def workspace() -> Path:
+    return Path(os.environ.get("WORKSPACE") or "/workspace")
+
+
+def usage() -> int:
+    ws = workspace()
+    print(
+        "usage:\n"
+        "  tutorial clone URL [DIRECTORY]   Clone a repository into {ws}/src\n"
+        "  tutorial deps                    rosdep install for everything in"
+        " src/\n"
+        "  tutorial build [PACKAGE...]      colcon build (optionally"
+        " --packages-select)\n"
+        "  tutorial list                    Show repositories currently in"
+        " src/".format(ws=ws),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def quote(argv: Sequence[str]) -> str:
+    """Print a command so it can be pasted back into a shell and run as-is.
+    Plain words stay bare for readability; anything else is single-quoted.
+    Printing ' '.join(argv) instead would show `--maintainer-name ROS
+    Developer`, which re-parses as two arguments -- and a pasteable command is
+    the whole point of printing it."""
+    return shlex.join(argv)
+
+
+def run(argv: Sequence[str]) -> int:
+    """Echo an argv list to stderr, then run it.  Never a shell string."""
+    argv = list(argv)
+    print("+ {}".format(quote(argv)), file=sys.stderr, flush=True)
+    try:
+        return subprocess.run(argv).returncode
+    except OSError:
+        print("{}: command not found".format(argv[0]), file=sys.stderr)
+        return 127
+
+
+def distro() -> str:
+    """The shell version expanded ${ROS_DISTRO} under `set -u`: an unset
+    variable was fatal, while an empty one was passed straight through to
+    rosdep.  Keep both, so nothing that worked before behaves differently."""
+    if "ROS_DISTRO" not in os.environ:
+        print(
+            "ROS_DISTRO is not set; this script must run inside the"
+            " workstation image",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return os.environ["ROS_DISTRO"]
+
+
+def cloned_repositories(src: Path) -> List[str]:
+    """Pure enough to test: the directories under src/ that hold a .git
+    directory, named relative to src/, sorted.  Mirrors
+    `find src -maxdepth 2 -name .git -type d -printf '%h\\n' | sed ... | sort`.
+    """
+    found = []
+    if (src / ".git").is_dir():
+        # find's %h for src/.git is src itself, which the shell version's
+        # `sed 's|^WS/src/||'` leaves unchanged because it has no trailing
+        # slash.  Keep that oddity rather than invent a new answer.
+        found.append(str(src))
+    try:
+        children = sorted(src.iterdir())
+    except OSError:
+        return sorted(found)
+    for child in children:
+        try:
+            if (child / ".git").is_dir():
+                found.append(child.name)
+        except OSError:
+            continue
+    return sorted(found)
+
+
+def cmd_clone(args: List[str]) -> int:
+    if not args:
+        return usage()
+    ws = workspace()
+    status = run_quietly(["init-workspace"])
+    if status != 0:
+        return status
+    status = run(["git", "-C", str(ws / "src"), "clone"] + args)
+    if status != 0:
+        return status
+    print("cloned into {}/src; next: tutorial deps && tutorial build".format(ws))
+    return 0
+
+
+def run_quietly(argv: Sequence[str]) -> int:
+    """init-workspace is run for its effect, not its narration: the shell
+    version redirected its stdout to /dev/null and did not echo it."""
+    try:
+        return subprocess.run(
+            list(argv), stdout=subprocess.DEVNULL
+        ).returncode
+    except OSError:
+        print("{}: command not found".format(argv[0]), file=sys.stderr)
+        return 127
+
+
+def cmd_deps(args: List[str]) -> int:
+    ws = workspace()
+    rosdistro = distro()
+    status = run(["rosdep", "update", "--rosdistro", rosdistro])
+    if status != 0:
+        return status
+    return run(
+        [
+            "rosdep",
+            "install",
+            "--from-paths",
+            str(ws / "src"),
+            "--ignore-src",
+            "--rosdistro",
+            rosdistro,
+            "-r",
+            "-y",
+        ]
+    )
+
+
+def cmd_build(args: List[str]) -> int:
+    ws = workspace()
+    try:
+        os.chdir(ws)
+    except OSError as err:
+        print("tutorial: {}".format(err), file=sys.stderr)
+        return 1
+    argv = ["colcon", "build", "--symlink-install"]
+    if args:
+        argv += ["--packages-select"] + args
+    status = run(argv)
+    if status != 0:
+        return status
+    print(
+        "built; open a new shell or: source {}/install/setup.bash".format(ws)
+    )
+    return 0
+
+
+def cmd_list(args: List[str]) -> int:
+    for name in cloned_repositories(workspace() / "src"):
+        print(name)
+    return 0
+
+
+HANDLERS = {
+    Command.CLONE: cmd_clone,
+    Command.DEPS: cmd_deps,
+    Command.BUILD: cmd_build,
+    Command.LIST: cmd_list,
 }
 
-# Print a command so it can be pasted back into a shell and run as-is.  Plain
-# words stay bare for readability; anything else is single-quoted.  Printing
-# "$*" instead would show `--maintainer-name ROS Developer`, which re-parses as
-# two arguments -- and a pasteable command is the whole point of printing it.
-shell_quote() {
-    local out='' arg
-    for arg in "$@"; do
-        if [[ "${arg}" =~ ^[A-Za-z0-9_./:=@%+,-]+$ ]]; then
-            out+="${arg} "
-        else
-            out+="'${arg//\'/\'\\\'\'}' "
-        fi
-    done
-    printf '%s' "${out% }"
-}
 
-run() { printf '+ %s\n' "$(shell_quote "$@")" >&2; "$@"; }
+def main(argv: List[str]) -> int:
+    if not argv:
+        return usage()
+    try:
+        command = Command(argv[0])
+    except ValueError:
+        return usage()
+    return HANDLERS[command](argv[1:])
 
-[ "$#" -ge 1 ] || usage
-command="$1"; shift
 
-case "${command}" in
-    clone)
-        [ "$#" -ge 1 ] || usage
-        init-workspace >/dev/null
-        run git -C "${WORKSPACE}/src" clone "$@"
-        echo "cloned into ${WORKSPACE}/src; next: tutorial deps && tutorial build"
-        ;;
-    deps)
-        run rosdep update --rosdistro "${ROS_DISTRO}"
-        run rosdep install --from-paths "${WORKSPACE}/src" --ignore-src \
-            --rosdistro "${ROS_DISTRO}" -r -y
-        ;;
-    build)
-        cd "${WORKSPACE}"
-        if [ "$#" -gt 0 ]; then
-            run colcon build --symlink-install --packages-select "$@"
-        else
-            run colcon build --symlink-install
-        fi
-        echo "built; open a new shell or: source ${WORKSPACE}/install/setup.bash"
-        ;;
-    list)
-        find "${WORKSPACE}/src" -maxdepth 2 -name .git -type d -printf '%h\n' 2>/dev/null \
-            | sed "s|^${WORKSPACE}/src/||" \
-            | sort || true
-        ;;
-    *)
-        usage
-        ;;
-esac
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(141)
