@@ -79,7 +79,7 @@ help:
 	@echo '  make selftest    Check the workstation itself (~10 min; never touches your work)'
 	@echo
 	@echo 'Working on this project'
-	@echo '  make lint        Validate the compose file and shell scripts'
+	@echo '  make lint        Validate compose.yaml and lint every script (shellcheck, Python 3.9)'
 	@echo '  make digest      Print the base-image digest to pin'
 	@echo '  make reset       Delete containers AND volumes -- destructive, asks first'
 	@echo
@@ -239,9 +239,7 @@ selftest:
 
 lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
-	@if command -v shellcheck >/dev/null 2>&1; then \
-	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url scripts/run-quiet scripts/compose-up && echo 'shellcheck: ok'; \
-	else echo 'shellcheck not installed; skipping script lint'; fi
+	./scripts/lint-scripts
 
 # Prints the multi-arch index digest for the configured distribution, for
 # pasting into .env / compose.yaml as ROS_BASE_DIGEST.
