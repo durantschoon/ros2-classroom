@@ -274,3 +274,27 @@ standing instructions is expected and is not a deviation."
 
 > Read-only verification beyond what the prompt lists is welcome: it is not
 > follow-on work. Disclose it under Deviations.
+
+---
+
+## sf-013 — Every skill and agent names its own source
+
+- **Target:** skill and agent, frontmatter or a closing line; also `log-friction`
+- **Status:** proposed
+- **Evidence:** when the user asked where these lessons should go, nobody in
+  the session knew where the skill came from. Finding out took walking a chain
+  by hand: the skill directory is a symlink into the Guix store; the store item
+  has no derivation, only a `files` referrer, which is Guix Home's signature;
+  `guix home describe` names a stored `home/base.scm`; that file's comments
+  mention `make apply`; a search found `~/dot_files`; its `claude/` submodule
+  is the actual source. The answer is a repository, not a machine, but nothing
+  in the deployed files says so.
+
+**Add to each skill's and agent's text:**
+
+> Source: `github.com/durantschoon/claude-config`, `skills/<name>/` (agents:
+> `agents/<name>.md`). Deployed read-only by Guix Home from the `claude/`
+> submodule of `dot_files` (`make apply`). Edit the source, never the deployed
+> copy; harvest `docs/stages/SKILL-FEEDBACK.md` entries there.
+
+With that line in place, the harvest step in `sf-001` can name where to go.
