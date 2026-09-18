@@ -62,7 +62,26 @@ Decisions made along the way:
 ### Stage 2 — "What you would have run"
 
 Each target prints the native equivalent for the student's detected platform
-before executing.
+before executing — for students who asked for it.
+
+**The student chooses, once, at the very beginning.** The first time they run
+a make target, they are asked:
+
+> 1. Just run things for me in the browser workstation.
+> 2. Do that, AND show me the commands that should do the same thing directly
+>    on my own system — no container involved.
+
+The answer is saved locally (gitignored) and never asked again; a make target
+changes it later. With no terminal to ask on (CI, scripts), the default is
+option 1 and nothing blocks. Option 2 is honest about its claim: these are
+commands we *think* work natively on their OS, each with its verification
+status, not a promise.
+
+**Windows means WSL.** For a Windows student the native route shown is ROS
+inside WSL 2 (Ubuntu and apt), not a pure-Windows install. WSL is already this
+project's documented Windows path, the apt recipes are the ones CI can verify,
+and ROS's pure-Windows install is the most fragile of all the platforms. The
+first recipe a Windows student without WSL sees is therefore `wsl --install`.
 
 Design sketch:
 
@@ -71,8 +90,8 @@ Design sketch:
 - Platform detection reuses `scripts/compose-command`'s approach.
 - Output clearly separates *what you would run natively* from *what we are
   running for you*.
-- `EXPLAIN=0` silences it for students who have internalised the commands;
-  `EXPLAIN=only` prints without executing.
+- The saved choice can be overridden per command: `EXPLAIN=0` silences the
+  native commands, `EXPLAIN=only` prints them without executing anything.
 
 **The honesty problem to solve first.** We would be printing commands for
 platforms we do not run. A printed command that does not actually work on
@@ -84,7 +103,18 @@ cheapest first:
 2. CI-verify the Linux recipes for real, since GitHub runners are Linux.
 3. Accept community verification for macOS/Windows via the feedback loop below.
 
-Acceptance: no command is printed without a verification status attached.
+Acceptance: a new student is asked exactly once; nothing native is printed
+for a student who chose option 1; and no command is ever printed without a
+verification status attached.
+
+Planned pipeline stages, to be authored after the Python port (stages 01-05)
+lands, since recipes are structured data and belong in Python:
+
+1. The first-run question, its saved answer, and the target that changes it.
+2. The recipe data model and platform detection (the Stage 4 decision points).
+3. Linux/apt recipes, verified for real in CI.
+4. macOS and WSL recipes, entering as `verified-by-hand` or
+   `community-reported`.
 
 ### Stage 3 — Generate a runnable native script
 
