@@ -29,12 +29,35 @@ means a student can graduate off this repo onto a real native install.
 
 ### Stage 1 — Task-level make targets
 
-Wrap the common student operations in targets named after the task, not the
-tool: `make package` (create a package), `make node`, `make build`, `make run`,
-`make test`. These sit on top of the existing `pkg` helper.
+**Status: done**, except `make node` (deferred, below).
 
-Acceptance: a student can do the first three ROS tutorials without typing a
-`docker`/`podman` command.
+Wrap the common student operations in targets named after the task, not the
+tool: `make package`, `make build`, `make run`, `make test`, sitting on the `pkg`
+helper, which prints each real `ros2`/`colcon` command — quoted so it pastes —
+before running it.
+
+Acceptance: a student can complete the three client-library beginner tutorials
+without typing a `docker`/`podman` command:
+
+1. Creating a workspace
+2. Creating a package
+3. Writing a simple publisher and subscriber (C++ and Python)
+
+Decisions made along the way:
+
+- **Students get the ROS meanings of `build` and `test`.** In ROS, "build" means
+  `colcon build` of your code; that is what a student following a tutorial will
+  type. The image and self-test targets that previously held those names became
+  `make image` and `make selftest`.
+- **`make node` is deferred.** Adding a node to an existing package means
+  patching a `CMakeLists.txt` or `setup.py` the student may already have
+  edited by hand — much riskier than generating fresh files. Revisit once
+  `pkg` is ported to Python (see the language section below).
+- **Two terminals, stated everywhere.** Every `make` command runs on the
+  student's own computer; the terminal inside the browser desktop is for ROS
+  commands. Because `make` exists inside the container, a workstation target
+  typed there would fail with a baffling "No rule to make target", so a shell
+  function explains instead.
 
 ### Stage 2 — "What you would have run"
 
@@ -177,6 +200,46 @@ points, and that is much cheaper to discover before a server exists.
 Acceptance for a first cut: a student can produce a report, see exactly what it
 contains, choose not to send it, and still get a usable fix prompt.
 
+## Language: Python replaces shell
+
+**Decided 2026-09-18.** Tooling moves from shell to Python, not Go.
+
+Why Python:
+
+- It is already in the image, so the container side adds nothing.
+- It is ROS's own tooling language (`ros2`, `colcon`, and `rosdep` are all
+  Python), and students writing `rclpy` nodes can read the tools they use.
+- `pkg` is already mostly Python: its file patching is embedded Python heredocs
+  inside a bash script.
+- On the host, wherever `make` works `python3` does too. macOS gets both from
+  the Command Line Tools; Linux and WSL ship Python 3. So it adds no install
+  burden for anyone who can already run the Makefile.
+
+Constraints this sets:
+
+- **Host scripts are stdlib-only and Python 3.9-compatible**, because macOS's
+  Command Line Tools ship 3.9. No third-party imports: a `pip install` step
+  would be exactly the setup grunt this project exists to remove.
+- **Some things stay shell because they must.** The bashrc drop-in is
+  *sourced* by bash, and it holds the `make` guard. The entrypoint sources
+  `setup.bash` before exec. Openbox runs its autostart as shell. The Makefile
+  stays as the student-facing interface; its recipes call the Python scripts.
+
+What this gives up: Windows students without WSL still get no native tooling,
+which a Go binary would have provided. WSL is already the documented Windows
+route, so that is an acceptable trade.
+
+**Porting order.** Never change the tests and the code in the same step. Port
+the host and container scripts first, with the existing shell smoke suite as
+the oracle, which must stay green after every script. Port the smoke suite
+itself last, once everything it checks is already Python.
+
+For the record, of the fourteen bugs found while building Stages 0 and 1, one
+was a shell-language bug (`"$*"` dropping quotes). The rest were platform,
+engine, and ROS semantics that any language would meet. The case for Python is
+readability for students and a sane home for Stage 2's structured recipe data,
+not a lower bug count.
+
 ## Non-goals
 
 - Replacing the official ROS installation instructions. We point at them.
@@ -185,5 +248,5 @@ contains, choose not to send it, and still get a usable fix prompt.
 
 ## Status
 
-Stage 0 (the container workstation itself) is done and verified. Stages 1-4
-are not started. The `pkg` helper is the seed of Stage 1.
+Stage 0 (the container workstation itself) and Stage 1 (task-level make
+targets) are done and verified. Stages 2-4 are not started.
