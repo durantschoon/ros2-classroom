@@ -34,20 +34,32 @@ DESKTOP_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash 
 help:
 	@echo 'ROS 2 tutorial workstation'
 	@echo
-	@echo '  make build       Build the image for the current architecture'
+	@echo '  Targets are listed in the order you would first use them, not'
+	@echo '  alphabetically: reading top to bottom is the path from a fresh'
+	@echo '  machine to a turtle you can drive. The later groups are for when'
+	@echo '  something looks wrong, or for working on the project itself.'
+	@echo
+	@echo 'Start here -- once per machine'
+	@echo '  make doctor      Check this machine can build and run the workstation'
+	@echo '  make build       Build the image (slow the first time, cached after)'
+	@echo
+	@echo 'Every session'
 	@echo '  make up          Start the browser desktop'
-	@echo '  make open        Open (or print) $(URL)'
-	@echo '  make shell       Enter a sourced ROS shell'
-	@echo '  make turtlesim   Launch turtlesim on the browser desktop'
-	@echo '  make teleop      Launch keyboard teleop on the browser desktop'
-	@echo '  make logs        Follow container logs'
-	@echo '  make down        Stop containers, keep volumes'
-	@echo '  make reset       Delete containers AND volumes (destructive)'
-	@echo '  make test        Run the automated smoke tests'
-	@echo '  make lint        Validate compose config and shell scripts'
-	@echo '  make digest      Print the current base-image digest to pin'
+	@echo '  make open        Open it in your browser ($(URL))'
+	@echo '  make turtlesim   Launch turtlesim on that desktop'
+	@echo '  make teleop      Launch teleop; click its window, then the arrow keys'
+	@echo '  make shell       A sourced ROS shell, for tutorials and your own packages'
+	@echo '  make down        Stop the containers, keeping your workspace'
+	@echo
+	@echo 'When something looks wrong'
 	@echo '  make engine      Show which container engine was detected'
-	@echo '  make doctor      Check host prerequisites and how to fix them'
+	@echo '  make logs        Follow the container logs'
+	@echo '  make test        Run the automated smoke tests'
+	@echo
+	@echo 'Working on this project'
+	@echo '  make lint        Validate the compose file and shell scripts'
+	@echo '  make digest      Print the base-image digest to pin'
+	@echo '  make reset       Delete containers AND volumes -- destructive, asks first'
 	@echo
 	@echo 'Container engine: $(if $(COMPOSE),$(COMPOSE),none detected - run "make engine")'
 

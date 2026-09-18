@@ -1,53 +1,150 @@
-# Manual platform test matrix
+# Platform test checklist
 
-CI covers amd64 end to end and arm64 as a build plus headless checks. The
-browser desktop, keyboard input, and Docker Desktop's VM behaviour still need a
-human on each host before the branch is called complete.
+CI covers amd64 end to end and arm64 as a build plus headless checks. What CI
+*cannot* check is the part students actually see: whether the desktop renders in
+a browser, whether keystrokes reach the turtle, and how each platform's
+container runtime behaves. That needs a human on each machine.
 
-A row is only complete when a human has done the browser steps; an automated
-`make test` pass covers steps 4-7 but cannot confirm that the desktop renders
-or that the arrow keys move the turtle.
+This doubles as data collection. Record results in the decision-point vocabulary
+from [roadmap.md](roadmap.md#stage-4--failure-capture-and-the-improvement-loop),
+so your own three machines seed the recipe corpus rather than living in your
+head.
 
-Record the result of each run below: Docker version, available memory, the
-image digest (`docker image inspect --format '{{index .RepoDigests 0}}'` or the
-build's `sha256`), and what you observed.
+## Before you start
 
-## Procedure per host
+Per machine, budget **30-45 minutes**, nearly all of it the first image build.
 
-```sh
-git clone <repo> && cd ros2_turtlesim
-git checkout docker/cross-platform-tutorials
-make build
-make up
-make open
+| Need | Value |
+|---|---|
+| Disk free | 15 GB minimum, 25 GB comfortable |
+| RAM for the engine | 4 GB minimum, 8 GB comfortable |
+| Network | The build pulls ~3 GB |
+
+Run `make doctor` first on every machine — it reports engine, version, rootless
+status, disk and RAM, and names the fix for anything missing.
+
+---
+
+## A. macOS (Apple Silicon)
+
+**Engine:** Docker Desktop, or `brew install podman && podman machine init && podman machine start`.
+
+- [ ] `make doctor` reports an engine and passes resources
+- [ ] `make build` completes — **watch:** it must build `linux/arm64` natively
+- [ ] Confirm the arch: `docker image inspect ros2-tutorials:lyrical --format '{{.Architecture}}'` → `arm64`
+- [ ] `make up` then `make open` — browser opens the desktop
+- [ ] Desktop renders: Openbox background, a terminal already open
+- [ ] Right-click → turtlesim_node — window appears
+- [ ] Right-click → turtle_teleop_key, click it, **arrow keys move the turtle**
+- [ ] `install-ros-packages demo-nodes-cpp` succeeds in the desktop terminal
+- [ ] `tutorial clone https://github.com/ros/ros_tutorials.git && tutorial deps && tutorial build`
+- [ ] `make down && make up` — `/workspace/src` still has the clone
+- [ ] `make test` — record the pass/fail counts
+- [ ] `make down` stops within the grace period
+
+**Watch for:** if the build falls back to `linux/amd64` it will run under Rosetta
+and the software-rendered desktop will be noticeably slow — that is a bug to
+report, not something to work around with `--platform`.
+
+---
+
+## B. Windows 11 + WSL 2
+
+Test **both** entry points, because the README advertises both.
+
+**Engine:** Docker Desktop with WSL integration enabled for your distro, or
+Podman inside WSL.
+
+### B1. From a WSL shell
+
+- [ ] Repo is cloned inside the WSL filesystem (`~/...`, **not** `/mnt/c/...`)
+- [ ] `make doctor` reports an engine
+- [ ] `make build` completes
+- [ ] `make up` then `make open` — **watch:** this must open a Windows browser,
+      not a text editor. That failure mode was real; see `scripts/open-url`
+- [ ] Desktop renders in the Windows browser at `localhost:6080`
+- [ ] turtlesim window appears
+- [ ] **Arrow keys move the turtle**
+- [ ] `install-ros-packages demo-nodes-cpp` succeeds
+- [ ] `tutorial clone ... && tutorial deps && tutorial build`
+- [ ] Persistence across `make down && make up`
+- [ ] `make test` — record counts
+- [ ] `make down` clean
+
+### B2. From PowerShell
+
+Make is usually absent; use the documented plain commands.
+
+- [ ] `docker compose build`
+- [ ] `docker compose up -d`
+- [ ] Browse to `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`
+- [ ] Desktop renders; turtlesim and teleop work from the right-click menu
+- [ ] `docker compose down`
+
+**Watch for:** a repo on `/mnt/c` makes the build crawl; Docker Desktop must
+have WSL integration on for the distro you are in, or `docker` resolves to the
+Windows shim and fails.
+
+---
+
+## C. Pure Linux
+
+**Engine:** Docker Engine + Compose plugin, or rootless Podman 4.4+.
+
+- [ ] `make doctor` — note whether it reports docker or podman
+- [ ] `make build`
+- [ ] `make up` then `make open` — `xdg-open` path, needs a real browser installed
+- [ ] Desktop renders
+- [ ] turtlesim appears; **arrow keys move the turtle**
+- [ ] `install-ros-packages demo-nodes-cpp`
+- [ ] `tutorial clone ... && tutorial deps && tutorial build`
+- [ ] Persistence across `make down && make up`
+- [ ] `make test` — record counts
+- [ ] `make down` clean
+- [ ] If Podman: confirm no CNI warnings leak through the Make targets, and that
+      `VERBOSE=1 make up` shows them again
+
+**Watch for:** on Fedora/RHEL, SELinux affects bind mounts — this project uses
+named volumes so it should not bite, but note it if it does. If the machine has
+an NVIDIA GPU, the software-rendered default must still work *without* the
+NVIDIA toolkit.
+
+---
+
+## Recording a run
+
+For each machine, fill in the decision points. Closed values only — this is the
+same vocabulary the failure reports will use.
+
 ```
-
-1. **Desktop** — the noVNC page loads and shows an Openbox desktop with a
-   terminal already open.
-2. **turtlesim** — right-click → turtlesim_node; the window appears.
-3. **teleop** — right-click → turtle_teleop_key, click that window, arrow keys
-   move the turtle.
-4. **Install** — `install-ros-packages demo-nodes-cpp` succeeds in the desktop
-   terminal.
-5. **Build** — `tutorial clone https://github.com/ros/ros_tutorials.git`,
-   `tutorial deps`, `tutorial build` succeed.
-6. **Persistence** — `make down && make up`, then confirm `/workspace/src` still
-   has the clone and a new shell finds the built package.
-7. **Shutdown** — `make down` stops cleanly within the grace period.
+os:             ubuntu-24.04 | fedora-41 | macos-15 | windows-11 | ...
+arch:           amd64 | arm64
+environment:    native | wsl2 | vm | ssh-only
+package_manager: apt | dnf | brew | conda | none
+engine:         docker | podman-3 | podman-4 | none
+display:        x11 | wayland | wslg | headless
+gpu:            nvidia | amd | intel | none
+network:        direct | proxy | restricted
+ros_distro:     lyrical
+```
 
 ## Results
 
-| Host | Arch | Docker | RAM | Image digest | Date | Result | Notes |
-|---|---|---|---|---|---|---|---|
-| Linux Docker Engine | amd64 | | | | | ☐ | |
-| Linux Docker Engine | arm64 | | | | | ☐ | build + headless only |
-| macOS Docker Desktop | Apple Silicon | | | | | ☐ | |
-| macOS Docker Desktop | Intel | | | | | ☐ | if hardware available |
-| Windows Docker Desktop (WSL 2) | amd64 | | | | | ☐ | test from PowerShell |
-| Windows Docker Desktop (WSL 2) | amd64 | | | | | ☐ | test from a WSL shell |
-| WSL 2 Ubuntu 22.04, rootless Podman | amd64 | podman 3.4.4 + podman-compose 1.6.0 | 15 GB | ros2-tutorials:lyrical (3.1 GB) | 2026-09-17 | automated ☑ / manual ☐ | `make test` 20/20; steps 1-3 below not human-verified |
-| Linux rootless Podman | amd64 | | | | | ☐ | `make engine` shows podman |
+| Machine | Decision points | Date | `make test` | Manual steps | Notes |
+|---|---|---|---|---|---|
+| WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ teleop ☐ | podman-compose 1.6.0; image 3.1 GB |
+| macOS | | | | ☐ | |
+| Windows 11 (WSL shell) | | | | ☐ | |
+| Windows 11 (PowerShell) | | | | ☐ | |
+| Pure Linux | | | | ☐ | |
 
-Both Windows rows matter because the README advertises both entry points, and
-the Podman row matters because the README advertises Podman as a fallback:
-record the `podman-compose` version alongside the Docker version.
+A row counts as complete only when a human has done the browser steps. An
+automated `make test` pass cannot tell you the desktop rendered or that the
+arrow keys worked.
+
+## If something fails
+
+Note which checklist line failed, the decision points above, and the error text.
+That is exactly the payload Stage 4 will formalise — capturing it by hand now
+tells us whether those nine fields are actually sufficient to explain a failure,
+which is worth knowing before any reporting tooling gets built.

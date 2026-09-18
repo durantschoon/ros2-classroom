@@ -92,6 +92,8 @@ supported.
 - [Installing packages and building source tutorials](docs/package-management.md)
 - [Creating your own packages, templates, and custom interfaces](docs/creating-packages.md)
 - [GPU, USB, cameras, and other optional extensions](docs/hardware-and-gpu.md)
+- [Purpose and roadmap: why this exists and what comes next](docs/roadmap.md)
+- [Platform test checklist](docs/platform-test-matrix.md)
 - [The implementation plan this branch follows](docs/cross-platform-tutorial-workstation.md)
 - [Why the distribution choice differs from `main`](docs/ros-distributions.md)
 
