@@ -2,7 +2,7 @@ name: Docker image
 
 on:
   push:
-    branches: ["docker/**"]
+    branches: ["main", "python-port", "docker/**"]
   pull_request:
   workflow_dispatch:
 
@@ -12,14 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: ShellCheck
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Lint every script by shebang (shellcheck, Python 3.9)
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends shellcheck
-          shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh \
-                     scripts/smoke-container scripts/base-image-digest \
-                     scripts/compose-command scripts/check-host scripts/open-url \
-                     scripts/run-quiet
+          python --version
+          python scripts/lint-scripts
 
       - name: Validate the compose configuration
         run: docker compose config --quiet
