@@ -114,22 +114,87 @@ the report's Blocked section instead of improvising an answer.
   they judge in the same stage.
 - Stages running concurrently get distinct `SELFTEST_PROJECT`,
   `SELFTEST_NOVNC_PORT`, `SELFTEST_ROS_DOMAIN_ID`, and `IMAGE_NAME`.
-- Executors attempt their own push and expect credential failure; the
-  coordinator pushes and merges.
+- Executors push their own stage branch, and on this host that succeeds. The
+  coordinator still does every merge and every push of `python-port`.
 - Review is the diff plus an independent rerun of the gates, never reading the
   report alone.
 - A retro every 5 stages (before authoring stage 05, 10, …), plus whenever the
   user asks.
 
+### Added by the retro before stage 05
+
+Patterns across the reports of stages 01-04, and the rule each one became:
+
+- **The executor's worktree was created at a stale commit in 4 of 4 stages.**
+  Every prompt now opens with a "First step": check for the prompt file, and
+  fast-forward to `origin/python-port` when it is missing.
+- **The coordinator's own test payloads were wrong in 3 of 4 stages.** Stage
+  01's negative control could not fail at the severity the same prompt
+  specified; stage 03's "remove the tool from PATH" command left the tool on
+  PATH; stage 04's example of a header the old code missed was one it matched.
+  Each time the executor noticed and disclosed it. The rule: **the coordinator
+  runs every negative control and every example before committing a prompt.**
+  A payload that was never executed is a guess.
+- **Commit messages.** Prompts specify the exact *subject line*. Executors add a
+  `Co-Authored-By:` trailer under their own standing instructions; that is
+  expected, not a deviation.
+- **Reverting a mutation.** `git checkout --` restores the *committed* file,
+  which during a port is the old implementation, not the executor's work.
+  Mutations are reverted by copy-out and copy-back, confirmed with a checksum.
+- **Never overlap a baseline or a mutation with a running self-test**; the
+  self-test builds from the working tree.
+- Stage files by path. Never `git add -A`: agent worktrees live inside this
+  repository (`.claude/worktrees/` is ignored, but do not rely on that alone).
+- Executors running extra, read-only verification beyond the prompt is
+  welcome. It goes under Deviations like everything else.
+
+More environment facts learned the hard way:
+
+- A container started with `--network=none` makes freshly generated packages
+  *fail* `pkg test`: some ament lint tests fetch XML schemas.
+- zsh does not word-split unquoted variables. Loop over explicit words, or use
+  `bash -c`.
+- The local `python3` is 3.10. Real 3.9 is
+  `podman run --rm -v "$PWD":/repo:ro -w /repo docker.io/library/python:3.9-slim …`.
+
+## Backlog from the reports' Open questions
+
+Unresolved, and deliberately not slipped into a port stage:
+
+- Lint the permanent shell files at `--severity=info`? It needs six
+  behaviour-neutral `# shellcheck disable=` comments.
+- CI installs apt's shellcheck (0.9.x); local runs pin v0.11.0. Findings can
+  differ.
+- `lint-scripts` finds its engine through `compose-command`, so a host with a
+  bare engine and no compose cannot lint shell files.
+- `install-ros-packages` runs `sudo apt-get update` without echoing it, against
+  the no-black-box rule.
+- `tutorial list` prints the workspace root when `src/.git` exists. Preserved
+  by the port; probably a bug.
+- `pkg new` accepts a name beginning with `--`.
+- `run-quiet` handles SIGINT but not SIGTERM or SIGHUP.
+- `compose-up` reads `COMPOSE_PROJECT_NAME` to find the desktop but does not
+  pass it on, so the project is decided in two places.
+- `quote()` is duplicated in `pkg` and `tutorial`; sharing it needs a Dockerfile
+  change.
+- **No real `docker compose` has ever run this project.** Every real run so far
+  is Podman on WSL. The macOS section of `docs/platform-test-matrix.md` is
+  where that gets tested.
+
 ## Plan for the Python port
 
-| Stage | Kind | Scope | Runs |
-|---|---|---|---|
-| 01 | Infra | Lint by shebang: real shellcheck and a Python 3.9 gate, locally and in CI; CI triggers that actually fire | alone |
-| 02 | Tests only | Black-box tests for the host scripts; smoke coverage for `tutorial` and `init-workspace` | alone |
-| 03 | Port | Container scripts: `pkg`, `tutorial`, `init-workspace`, `install-ros-packages` | parallel with 04 |
-| 04 | Port | Host scripts: `compose-command`, `compose-up`, `check-host`, `run-quiet`, `open-url`, `base-image-digest` | parallel with 03 |
-| 05 | Port | `scripts/smoke-container` itself, last (retro first) | alone |
+| Stage | Kind | Scope | Runs | State |
+|---|---|---|---|---|
+| 01 | Infra | Lint by shebang: real shellcheck and a Python 3.9 gate, locally and in CI; CI triggers that actually fire | alone | merged |
+| 02 | Tests only | Black-box tests for the host scripts; smoke coverage for `tutorial` and `init-workspace` | alone | merged |
+| 03 | Port | Container scripts: `pkg`, `tutorial`, `init-workspace`, `install-ros-packages` | parallel with 04 | merged |
+| 04 | Port | Host scripts: `compose-command`, `compose-up`, `check-host`, `run-quiet`, `open-url`, `base-image-digest` | parallel with 03 | merged |
+| 05 | Tests only | Black-box tests for `scripts/smoke-container` itself: isolation, accounting, cleanup (retro first) | alone | next |
+| 06 | Port | `scripts/smoke-container`, last | alone | |
+
+The suite's port was planned as stage 05. It became stage 06 when the rule
+"tests before ports" was applied to the suite itself: it judged every other
+port, and nothing judged it.
 
 The same names throughout, with no `.py` extension, so the Makefile, Dockerfile,
 CI, and docs need no renames. What stays shell, and why, is in
