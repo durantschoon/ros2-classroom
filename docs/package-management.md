@@ -84,3 +84,8 @@ so a rebuilt package is available in the next terminal without extra steps.
 
 `init-workspace` creates `/workspace/src` and a marker file. It never overwrites
 existing work; running it twice is harmless.
+
+## Creating your own packages
+
+For starting a new package from scratch — templates, custom interfaces, and
+the build/test loop — see [creating-packages.md](creating-packages.md).

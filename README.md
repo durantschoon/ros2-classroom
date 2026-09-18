@@ -90,6 +90,7 @@ supported.
 - [Host requirements and how to check them](docs/host-requirements.md)
 - [Cross-platform notes, security model, and troubleshooting](docs/cross-platform.md)
 - [Installing packages and building source tutorials](docs/package-management.md)
+- [Creating your own packages, templates, and custom interfaces](docs/creating-packages.md)
 - [GPU, USB, cameras, and other optional extensions](docs/hardware-and-gpu.md)
 - [The implementation plan this branch follows](docs/cross-platform-tutorial-workstation.md)
 - [Why the distribution choice differs from `main`](docs/ros-distributions.md)

@@ -1,0 +1,5 @@
+# Request fields go above the ---, response fields below it.
+int64 a
+int64 b
+---
+int64 sum

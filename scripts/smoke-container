@@ -211,6 +211,51 @@ else
     bad 'the built package did not run from an automatically sourced overlay'
 fi
 
+step 'pkg helper: templates, interfaces, and lint'
+# `pkg new --template pubsub --build` should produce a real talker/listener
+# pair, not just a package that happens to compile.
+if in_desktop 'pkg new pkg_smoke_pubsub --template pubsub --build' >/tmp/pkg-smoke-pubsub.log 2>&1; then
+    ok 'pkg new --template pubsub builds'
+else
+    bad 'pkg new --template pubsub failed to build'
+fi
+
+check 'templated package registers its talker executable' \
+    in_desktop 'ros2 pkg executables pkg_smoke_pubsub | grep -q talker'
+
+if in_desktop 'nohup ros2 run pkg_smoke_pubsub talker >/tmp/pkg-smoke-talker.log 2>&1 & sleep 3; timeout 15 ros2 topic echo --once /chatter' 2>/dev/null \
+        | grep -q 'hello from pkg_smoke_pubsub'; then
+    ok 'templated pubsub node actually publishes on /chatter'
+else
+    bad 'templated pubsub node did not publish on /chatter'
+fi
+# Match by exact process name (no -f): the pattern would otherwise match the
+# pkill invocation's own command line and kill the wrong thing.
+in_desktop 'pkill -x talker' >/dev/null 2>&1 || true
+
+# `--interfaces` is the highest-risk mode: rosidl wiring in CMakeLists.txt and
+# package.xml is easy to get subtly wrong in ways that still build with
+# colcon but fail xmllint or `ros2 interface show`.
+if in_desktop 'pkg new pkg_smoke_msgs --interfaces --build' >/tmp/pkg-smoke-msgs.log 2>&1; then
+    ok 'pkg new --interfaces builds'
+else
+    bad 'pkg new --interfaces failed to build'
+fi
+check 'ros2 interface show works for a generated message' \
+    in_desktop 'ros2 interface show pkg_smoke_msgs/msg/Temperature'
+check 'ros2 interface show works for a generated service' \
+    in_desktop 'ros2 interface show pkg_smoke_msgs/srv/AddTwoInts'
+
+# `colcon test` exits 0 even on failure; `pkg test` is supposed to surface the
+# real verdict from `colcon test-result`. A freshly generated package is
+# expected to pass its own default ament_lint_auto tests cleanly.
+pkg_test_output="$(in_desktop 'pkg test pkg_smoke_pubsub' 2>&1 || true)"
+if grep -q '0 errors, 0 failures' <<<"${pkg_test_output}"; then
+    ok 'pkg test reports a clean lint result for a generated package'
+else
+    bad "pkg test did not report a clean lint result: $(tail -5 <<<"${pkg_test_output}")"
+fi
+
 step 'Persistence across container recreation'
 $COMPOSE up -d --force-recreate desktop
 sleep 5

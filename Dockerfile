@@ -44,6 +44,11 @@ RUN extra_ros="" \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \
+        python3-flake8 \
+        python3-pytest-cov \
+        python3-pytest-repeat \
+        python3-pytest-rerunfailures \
+        clang-format \
         build-essential \
         cmake \
         git \
@@ -99,6 +104,7 @@ RUN mkdir -p /etc/bash.bashrc.d \
 COPY docker/bashrc.d/ros-workspace.sh /etc/bash.bashrc.d/ros-workspace.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 COPY docker/scripts/ /usr/local/bin/
+COPY docker/templates/ /usr/share/ros-workstation/templates/
 COPY docker/supervisord.conf /etc/supervisor/conf.d/ros-desktop.conf
 COPY docker/desktop/openbox-autostart /etc/xdg/openbox/autostart
 COPY docker/desktop/menu.xml /etc/xdg/openbox/menu.xml
@@ -111,6 +117,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint \
         /usr/local/bin/install-ros-packages \
         /usr/local/bin/init-workspace \
         /usr/local/bin/tutorial \
+        /usr/local/bin/pkg \
     && mkdir -p /workspace/src /var/log/supervisor \
     && chown -R ${USER_UID}:${USER_GID} /workspace
 

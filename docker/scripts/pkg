@@ -1,0 +1,300 @@
+#!/bin/bash
+# Create, build, and test ROS 2 packages in the persistent workspace.
+#
+# This is a thin layer over `ros2 pkg create` and `colcon`: every underlying
+# command is echoed before it runs, so the real workflow stays visible and you
+# can stop using this helper whenever you like.
+set -euo pipefail
+
+WORKSPACE="${WORKSPACE:-/workspace}"
+TEMPLATES="${ROS_WORKSTATION_TEMPLATES:-/usr/share/ros-workstation/templates}"
+
+run() { printf '+ %s\n' "$*" >&2; "$@"; }
+note() { printf '%s\n' "$*" >&2; }
+
+usage() {
+    cat >&2 <<USAGE
+usage:
+  pkg new NAME [options]      Create a package in ${WORKSPACE}/src
+      --python                ament_python package (default: ament_cmake)
+      --template pubsub|param Start from working code instead of an empty package
+      --interfaces            A .msg/.srv interface package, correctly wired
+      --deps "a b c"          Extra dependencies
+      --license NAME          Default: Apache-2.0
+      --build                 Build it after creating
+
+  pkg build [NAME...]         colcon build (all packages, or the named ones)
+  pkg test [NAME...]          colcon test AND report results (see note below)
+  pkg list                    Packages in this workspace
+
+Examples:
+  pkg new my_bot --template pubsub --build
+  pkg new my_bot_py --python --template param
+  pkg new my_bot_msgs --interfaces --build
+USAGE
+    exit 2
+}
+
+# `ros2 pkg create` warns when these are unset; take them from git when it knows.
+default_maintainer_name() {
+    git config --global user.name 2>/dev/null || echo 'ROS Developer'
+}
+default_maintainer_email() {
+    git config --global user.email 2>/dev/null || echo 'dev@example.com'
+}
+
+# Insert text into CMakeLists.txt just before ament_package(), which is where
+# ament requires targets and install rules to be declared.
+cmake_insert() {
+    CMAKE_FILE="$1" CMAKE_BLOCK="$2" python3 - <<'PY'
+import os
+
+path = os.environ['CMAKE_FILE']
+block = os.environ['CMAKE_BLOCK']
+text = open(path).read()
+marker = 'ament_package()'
+if marker not in text:
+    raise SystemExit(f'{path}: no ament_package() call to insert before')
+text = text.replace(marker, block.rstrip() + '\n\n' + marker, 1)
+open(path, 'w').write(text)
+PY
+}
+
+# Insert dependency elements into package.xml, just before <export> when it
+# is present.  The package_format3 schema requires <export> to be the LAST
+# child of <package>: `ros2 pkg create` always emits one (for build_type), so
+# inserting after </package> instead would leave buildtool_depend/depend/
+# exec_depend elements trailing the export block, which xmllint rejects.
+xml_insert() {
+    XML_FILE="$1" XML_BLOCK="$2" python3 - <<'PY'
+import os
+
+path = os.environ['XML_FILE']
+block = os.environ['XML_BLOCK']
+text = open(path).read()
+marker = '<export>' if '<export>' in text else '</package>'
+if marker not in text:
+    raise SystemExit(f'{path}: no {marker} element')
+text = text.replace(marker, block.rstrip() + '\n\n' + marker, 1)
+open(path, 'w').write(text)
+PY
+}
+
+# Add console_scripts entries and install the launch directory in setup.py.
+setup_py_patch() {
+    SETUP_FILE="$1" SETUP_PKG="$2" SETUP_NODES="$3" SETUP_LAUNCH="$4" python3 - <<'PY'
+import os
+import re
+
+path = os.environ['SETUP_FILE']
+pkg = os.environ['SETUP_PKG']
+nodes = [n for n in os.environ['SETUP_NODES'].split() if n]
+want_launch = os.environ['SETUP_LAUNCH'] == '1'
+text = open(path).read()
+
+entries = ',\n'.join(f"            '{n} = {pkg}.{n}:main'" for n in nodes)
+pattern = re.compile(r"('console_scripts':\s*\[)(\s*)(\])")
+if not pattern.search(text):
+    raise SystemExit(f'{path}: could not find an empty console_scripts list')
+text = pattern.sub(lambda m: f"{m.group(1)}\n{entries},\n        {m.group(3)}", text, count=1)
+
+if want_launch:
+    anchor = "data_files=["
+    if anchor not in text:
+        raise SystemExit(f'{path}: could not find data_files')
+    addition = (
+        "data_files=[\n"
+        "        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),"
+    )
+    text = text.replace(anchor, addition, 1)
+    if 'from glob import glob' not in text:
+        # flake8-import-order (I201) wants a blank line between the stdlib
+        # group and the third-party group that follows.
+        text = 'from glob import glob\n\n' + text
+
+open(path, 'w').write(text)
+PY
+}
+
+# Copy a template tree in, substituting the package name.
+apply_template() {
+    src="$1" dest="$2" name="$3"
+    (cd "${src}" && find . -type f -print0) | while IFS= read -r -d '' relative; do
+        target="${dest}/${relative#./}"
+        mkdir -p "$(dirname "${target}")"
+        sed "s/@PKG@/${name}/g" "${src}/${relative#./}" > "${target}"
+    done
+}
+
+cmd_new() {
+    [ "$#" -ge 1 ] || usage
+    local name="$1"; shift
+    local build_type='ament_cmake' template='' interfaces=0 extra_deps='' license='Apache-2.0' do_build=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --python) build_type='ament_python'; shift ;;
+            --cmake) build_type='ament_cmake'; shift ;;
+            --template) template="${2:?--template needs pubsub or param}"; shift 2 ;;
+            --interfaces) interfaces=1; shift ;;
+            --deps) extra_deps="${2:?--deps needs a list}"; shift 2 ;;
+            --license) license="${2:?--license needs a name}"; shift 2 ;;
+            --build) do_build=1; shift ;;
+            *) note "unknown option: $1"; usage ;;
+        esac
+    done
+
+    case "${template}" in
+        ''|pubsub|param) ;;
+        *) note "unknown template: ${template}"; usage ;;
+    esac
+
+    if [ "${interfaces}" -eq 1 ]; then
+        if [ "${build_type}" = 'ament_python' ]; then
+            note 'interface packages must be ament_cmake; rosidl does not generate from ament_python'
+            exit 1
+        fi
+        if [ -n "${template}" ]; then
+            note '--interfaces and --template are separate package kinds; pick one'
+            exit 1
+        fi
+    fi
+
+    local -a deps=()
+    if [ "${interfaces}" -eq 1 ]; then
+        # xml_insert (below) adds the precise buildtool_depend/depend/
+        # exec_depend split that rosidl actually needs. Also passing these
+        # through `ros2 pkg create --dependencies` would add generic
+        # <depend> elements for the same packages, and catkin_pkg's linter
+        # rejects a package.xml with both a generic and a specific
+        # dependency on the same package as redundant.
+        :
+    elif [ -n "${template}" ]; then
+        if [ "${build_type}" = 'ament_python' ]; then
+            deps=(rclpy std_msgs)
+        else
+            deps=(rclcpp std_msgs)
+        fi
+    fi
+    # shellcheck disable=SC2206
+    [ -n "${extra_deps}" ] && deps+=(${extra_deps})
+
+    init-workspace >/dev/null
+
+    local -a create=(ros2 pkg create "${name}"
+        --build-type "${build_type}"
+        --license "${license}"
+        --destination-directory "${WORKSPACE}/src"
+        --maintainer-name "$(default_maintainer_name)"
+        --maintainer-email "$(default_maintainer_email)")
+    [ "${#deps[@]}" -gt 0 ] && create+=(--dependencies "${deps[@]}")
+
+    run "${create[@]}"
+
+    local dir="${WORKSPACE}/src/${name}"
+
+    if [ "${interfaces}" -eq 1 ]; then
+        note ''
+        note 'Wiring the interface package (this is the part that is easy to get wrong):'
+        apply_template "${TEMPLATES}/interfaces" "${dir}" "${name}"
+        cmake_insert "${dir}/CMakeLists.txt" 'find_package(rosidl_default_generators REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Temperature.msg"
+  "srv/AddTwoInts.srv"
+  DEPENDENCIES builtin_interfaces
+)'
+        xml_insert "${dir}/package.xml" '  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <depend>builtin_interfaces</depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>'
+        note "  + msg/Temperature.msg and srv/AddTwoInts.srv"
+        note "  + rosidl_generate_interfaces() in CMakeLists.txt"
+        note "  + rosidl_default_generators / rosidl_default_runtime and the"
+        note "    rosidl_interface_packages group membership in package.xml"
+    elif [ -n "${template}" ] && [ "${build_type}" = 'ament_cmake' ]; then
+        apply_template "${TEMPLATES}/cpp/${template}" "${dir}" "${name}"
+        if [ "${template}" = 'pubsub' ]; then
+            cmake_insert "${dir}/CMakeLists.txt" 'add_executable(talker src/talker.cpp)
+target_link_libraries(talker rclcpp::rclcpp ${std_msgs_TARGETS})
+
+add_executable(listener src/listener.cpp)
+target_link_libraries(listener rclcpp::rclcpp ${std_msgs_TARGETS})
+
+install(TARGETS talker listener DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})'
+        else
+            cmake_insert "${dir}/CMakeLists.txt" 'add_executable(param_node src/param_node.cpp)
+target_link_libraries(param_node rclcpp::rclcpp)
+
+install(TARGETS param_node DESTINATION lib/${PROJECT_NAME})'
+        fi
+    elif [ -n "${template}" ]; then
+        # ament_python: node modules live inside the package directory.
+        local nodes launch=0
+        if [ "${template}" = 'pubsub' ]; then
+            nodes='talker listener'
+            launch=1
+        else
+            nodes='param_node'
+        fi
+        for node in ${nodes}; do
+            sed "s/@PKG@/${name}/g" \
+                "${TEMPLATES}/py/${template}/nodes/${node}.py" > "${dir}/${name}/${node}.py"
+        done
+        if [ "${launch}" -eq 1 ]; then
+            mkdir -p "${dir}/launch"
+            sed "s/@PKG@/${name}/g" \
+                "${TEMPLATES}/py/${template}/launch/demo.launch.py" > "${dir}/launch/demo.launch.py"
+        fi
+        setup_py_patch "${dir}/setup.py" "${name}" "${nodes}" "${launch}"
+    fi
+
+    note ''
+    note "created ${dir}"
+    if [ "${do_build}" -eq 1 ]; then
+        cmd_build "${name}"
+    else
+        note "next: pkg build ${name}"
+    fi
+}
+
+cmd_build() {
+    cd "${WORKSPACE}"
+    if [ "$#" -gt 0 ]; then
+        run colcon build --symlink-install --packages-select "$@"
+    else
+        run colcon build --symlink-install
+    fi
+    note ''
+    note "built; open a new shell, or: source ${WORKSPACE}/install/setup.bash"
+}
+
+cmd_test() {
+    cd "${WORKSPACE}"
+    local -a select=()
+    [ "$#" -gt 0 ] && select=(--packages-select "$@")
+
+    # `colcon test` exits 0 even when tests fail; `colcon test-result` is what
+    # actually reports failures.  Running both is why this subcommand exists.
+    run colcon test "${select[@]}" || true
+    note ''
+    note 'colcon test always exits 0; the real verdict comes from test-result:'
+    run colcon test-result --verbose
+}
+
+cmd_list() {
+    cd "${WORKSPACE}"
+    run colcon list --names-only
+}
+
+[ "$#" -ge 1 ] || usage
+command="$1"; shift
+case "${command}" in
+    new)   cmd_new "$@" ;;
+    build) cmd_build "$@" ;;
+    test)  cmd_test "$@" ;;
+    list)  cmd_list "$@" ;;
+    *)     usage ;;
+esac

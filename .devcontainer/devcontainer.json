@@ -1,0 +1,20 @@
+{
+    "name": "ROS 2 tutorial workstation",
+    "dockerComposeFile": "../compose.yaml",
+    "service": "desktop",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "ros",
+    "shutdownAction": "none",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-iot.vscode-ros",
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-python.python",
+                "redhat.vscode-xml",
+                "twxs.cmake"
+            ]
+        }
+    }
+}

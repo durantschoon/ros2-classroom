@@ -88,18 +88,11 @@ On macOS and Windows, expect slower builds than the named volume.
 
 ## VS Code dev container
 
-Point a `.devcontainer/devcontainer.json` at this same image rather than defining
-a second environment:
-
-```json
-{
-  "name": "ROS 2 tutorials",
-  "dockerComposeFile": "../compose.yaml",
-  "service": "desktop",
-  "workspaceFolder": "/workspace",
-  "remoteUser": "ros"
-}
-```
+[`.devcontainer/devcontainer.json`](../.devcontainer/devcontainer.json) points
+VS Code at the same `desktop` service rather than defining a second
+environment: same image, same `/workspace` volume, same `ros` user. Open the
+repository in VS Code and use **Reopen in Container**; it reuses `compose.yaml`
+as-is, so anything already running via `make up` keeps running.
 
 ## Heavier simulation stacks
 
