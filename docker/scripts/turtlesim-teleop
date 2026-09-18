@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Show which keys drive turtlesim, then hand over to turtle_teleop_key.
+
+turtle_teleop_key's own banner mentions the arrow keys in one line of prose,
+directly above a row of letter keys, and students reliably miss it.  This
+prints a picture of the arrows first, in the window they are looking at.
+"""
+
+import os
+import sys
+
+COMMAND = ["ros2", "run", "turtlesim", "turtle_teleop_key"]
+
+HELP = """
+  Click inside this window first, then press the arrow keys:
+
+            ↑             ↑  drive forward
+        ←   ↓   →         ↓  back up
+                          ←  turn left      →  turn right
+
+  Try the arrows before the letter keys listed below.
+
+"""
+
+
+def main() -> int:
+    sys.stdout.write(HELP)
+    # Like every helper here: show the real command before running it.
+    sys.stdout.write("+ " + " ".join(COMMAND) + "\n\n")
+    sys.stdout.flush()
+    try:
+        os.execvp(COMMAND[0], COMMAND)
+    except FileNotFoundError:
+        sys.stderr.write(
+            "ros2 was not found. Run this inside the workstation, from a "
+            "login shell: bash -lc turtlesim-teleop\n"
+        )
+        return 127
+    return 0  # unreachable: execvp replaces this process
+
+
+if __name__ == "__main__":
+    sys.exit(main())
