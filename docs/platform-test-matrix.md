@@ -27,8 +27,16 @@ status, disk and RAM, and names the fix for anything missing.
 
 ## A. macOS (Apple Silicon)
 
-**Engine:** Docker Desktop, or `brew install podman && podman machine init && podman machine start`.
+**Engine: use Docker here.** Docker Desktop is already installed on this Mac,
+and that makes it the most valuable run on the whole checklist: every real run
+so far has been Podman on WSL, so the Docker paths in the host scripts have only
+ever met the *fake* `docker` in the tests. This is their first real one.
 
+- [ ] `make engine` says `docker compose`, not podman
+- [ ] `python3 --version` — expect 3.9, from the Command Line Tools. That is the
+      floor the host scripts are written for
+- [ ] `make check` passes under that Python. Here the four `open-url` tests
+      that skip on WSL actually run, and take the macOS `open` path
 - [ ] `make doctor` reports an engine and passes resources
 - [ ] `make image` completes — **watch:** it must build `linux/arm64` natively
 - [ ] Confirm the arch: `docker image inspect ros2-tutorials:lyrical --format '{{.Architecture}}'` → `arm64`
@@ -45,6 +53,11 @@ status, disk and RAM, and names the fix for anything missing.
 - [ ] `make down && make up` — `/workspace/src` still has the clone
 - [ ] `make selftest` — record the pass/fail counts
 - [ ] `make down` stops within the grace period
+- [ ] `make image` again, then `make up`: it says the image was rebuilt and
+      recreates the desktop. Docker Compose does this by itself, so check the
+      explanation still reads correctly and nothing is recreated twice
+- [ ] `make logs` works (it is the Podman 3 path that is known broken)
+- [ ] No Podman-only noise anywhere: no CNI warnings, no "shared mount" line
 
 **Watch for:** if the build falls back to `linux/amd64` it will run under Rosetta
 and the software-rendered desktop will be noticeably slow — that is a bug to
@@ -145,7 +158,7 @@ ros_distro:     lyrical
 | Machine | Decision points | Date | `make selftest` | Manual steps | Notes |
 |---|---|---|---|---|---|
 | WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ arrow keys ☐ | podman-compose 1.6.0; image 3.1 GB |
-| macOS | | | | ☐ | |
+| macOS, Docker Desktop | | | | ☐ | first real `docker compose` run; record `make check` too |
 | Windows 11 (WSL shell) | | | | ☐ | |
 | Windows 11 (PowerShell) | | | | ☐ | |
 | Pure Linux | | | | ☐ | |
