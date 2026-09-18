@@ -10,7 +10,7 @@ docker compose up -d
 # open http://localhost:6080/vnc.html?autoconnect=1&resize=remote
 ```
 
-`make build`, `make up`, and `make open` are the same commands with less typing.
+`make image`, `make up`, and `make open` are the same commands with less typing.
 
 ## Requirements
 
@@ -70,7 +70,7 @@ so every target has a plain equivalent:
 
 | Make target | Plain command |
 |---|---|
-| `make build` | `docker compose build --pull` |
+| `make image` | `docker compose build` |
 | `make up` | `docker compose up -d` |
 | `make shell` | `docker compose run --rm shell` |
 | `make turtlesim` | `docker compose exec -d -u ros -e DISPLAY=:1 desktop bash -lc "ros2 run turtlesim turtlesim_node"` |
@@ -102,9 +102,13 @@ software-rendered desktop becomes noticeably slow.
 
 Open `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`.
 
-- A terminal opens automatically at startup, already sourced for ROS.
-- Right-click the desktop background for a menu with turtlesim, teleop, `rqt`,
-  and RViz.
+- A terminal opens automatically at startup, already sourced for ROS. It is
+  *inside* the workstation: use it for `ros2`, `colcon`, and `pkg`. Every
+  `make` command belongs in the terminal on your own computer instead. Typing a
+  workstation target like `make turtlesim` in here prints where to run it,
+  rather than make's confusing "No rule to make target".
+- Right-click the desktop background for a menu with turtlesim_node,
+  turtle_teleop_key, `rqt`, and RViz.
 - For the classic tutorial, run `ros2 run turtlesim turtlesim_node` in one
   terminal, then open a second terminal from the menu and run
   `ros2 run turtlesim turtle_teleop_key`. Keyboard focus must be on the teleop
@@ -179,7 +183,7 @@ supervisor output.
 xterm; click that window inside the noVNC view first.
 
 **`make turtlesim` says the container is not running.** Run `make up` first;
-`turtlesim` and `teleop` attach to a running desktop.
+`make turtlesim` and `make turtlesim-teleop` attach to a running desktop.
 
 **Rebuilding is slow.** The apt layer is a single large layer by design. Only a
 change to the package list or the base digest invalidates it.

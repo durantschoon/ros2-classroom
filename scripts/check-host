@@ -56,7 +56,7 @@ fi
 
 echo
 if [ "${status}" -eq 0 ]; then
-    echo 'Ready: run `make build`, then `make up`.'
+    echo 'Ready: run `make image`, then `make up`.'
 else
     echo 'Not ready; see docs/host-requirements.md.'
 fi

@@ -29,32 +29,50 @@ URL := http://localhost:$(NOVNC_PORT)
 # container rather than with `exec --detach`, which podman-compose lacks.
 DESKTOP_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash -lc
 
-.PHONY: help engine doctor require-engine build up open shell turtlesim teleop logs ps down reset test lint digest
+# The student package targets run the `pkg` helper inside the desktop, which
+# prints every real ros2/colcon command before running it.  PKG_VIA_MAKE makes
+# its "next:" hints name make targets instead of pkg subcommands.
+PKG_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(SERVICE) bash -lc
+
+.PHONY: help engine doctor require-engine require-desktop image up open shell turtlesim \
+	turtlesim-teleop teleop \
+	package build run test logs ps down reset selftest lint digest
 
 help:
 	@echo 'ROS 2 tutorial workstation'
 	@echo
 	@echo '  Targets are listed in the order you would first use them, not'
 	@echo '  alphabetically: reading top to bottom is the path from a fresh'
-	@echo '  machine to a turtle you can drive. The later groups are for when'
-	@echo '  something looks wrong, or for working on the project itself.'
+	@echo '  machine to a turtle you can drive, then to your own code. The'
+	@echo '  later groups are for when something looks wrong, or for working'
+	@echo '  on the project itself.'
+	@echo
+	@echo '  Run every make command HERE, in a terminal on your own computer.'
+	@echo '  The terminal inside the browser desktop is for ROS commands'
+	@echo '  (ros2, colcon, pkg); make does not work in there.'
 	@echo
 	@echo 'Start here -- once per machine'
 	@echo '  make doctor      Check this machine can build and run the workstation'
-	@echo '  make build       Build the image (slow the first time, cached after)'
+	@echo '  make image       Build the image (slow the first time, cached after)'
 	@echo
 	@echo 'Every session'
-	@echo '  make up          Start the browser desktop'
-	@echo '  make open        Open it in your browser ($(URL))'
-	@echo '  make turtlesim   Launch turtlesim on that desktop'
-	@echo '  make teleop      Launch teleop; click its window, then the arrow keys'
-	@echo '  make shell       A sourced ROS shell, for tutorials and your own packages'
-	@echo '  make down        Stop the containers, keeping your workspace'
+	@echo '  make up                 Start the desktop'
+	@echo '  make open               Open it in your browser ($(URL))'
+	@echo '  make turtlesim          Launch turtlesim on that desktop'
+	@echo '  make turtlesim-teleop   Drive turtlesim: click its window, then the arrow keys'
+	@echo '  make shell              Turn this terminal into a ROS shell (exit to return)'
+	@echo '  make down               Stop the containers, keeping your workspace'
+	@echo
+	@echo 'Your own packages -- each prints the real ros2/colcon command it runs'
+	@echo '  make package PKG=name   Create a package  [TEMPLATE=pubsub|param] [PYTHON=1] [INTERFACES=1]'
+	@echo '  make build [PKG=name]   colcon build'
+	@echo '  make run PKG=name NODE=executable   ros2 run; Ctrl-C stops it'
+	@echo '  make test [PKG=name]    colcon test, with the real pass/fail verdict'
 	@echo
 	@echo 'When something looks wrong'
 	@echo '  make engine      Show which container engine was detected'
 	@echo '  make logs        Follow the container logs'
-	@echo '  make test        Run the automated smoke tests'
+	@echo '  make selftest    Check the workstation itself (~10 min; never touches your work)'
 	@echo
 	@echo 'Working on this project'
 	@echo '  make lint        Validate the compose file and shell scripts'
@@ -69,6 +87,12 @@ engine:
 doctor:
 	@./scripts/check-host
 
+# Targets that exec into the desktop need it running; say so plainly rather than
+# surfacing the engine's "no such container" error.
+require-desktop: require-engine
+	@$(QUIET) $(COMPOSE) exec -T $(SERVICE) true >/dev/null 2>&1 \
+	    || { echo 'The desktop is not running. Start it first:  make up'; exit 1; }
+
 # Every target that talks to containers depends on this, so a missing engine
 # produces an explanation instead of an empty command line.
 require-engine:
@@ -78,17 +102,45 @@ require-engine:
 # No --pull: the base image is pinned by digest, so there is nothing newer to
 # fetch for a given ROS_BASE_DIGEST, and podman-compose translates --pull into
 # a flag that Podman 3.x rejects.  Refresh the pin with `make digest` instead.
-build: require-engine
+image: require-engine
 	$(COMPOSE) build
 
+# compose-up recreates the desktop when `make image` has produced a newer image,
+# which podman-compose would otherwise silently skip.
 up: require-engine
-	$(QUIET) $(COMPOSE) up -d
+	@COMPOSE='$(COMPOSE)' ENGINE='$(ENGINE)' $(QUIET) ./scripts/compose-up
 	@echo
-	@echo "Desktop starting. Open $(URL)/vnc.html?autoconnect=1&resize=remote"
-	@echo 'Right-click the desktop for the turtlesim menu, or run "make turtlesim".'
+	@echo 'The desktop is starting. Next:  make open'
 
+# Waits for noVNC first: straight after `make up` the desktop is still starting,
+# and opening early shows "failed to connect".  The instructions come after the
+# browser opens, because only then is there anything to right-click.
 open:
+	@if command -v curl >/dev/null 2>&1; then \
+	    i=0; until curl -fsS -o /dev/null --max-time 2 '$(URL)/vnc.html' 2>/dev/null; do \
+	        i=$$((i + 1)); \
+	        if [ "$$i" -eq 1 ]; then printf 'Waiting for the desktop to start'; fi; \
+	        if [ "$$i" -ge 30 ]; then \
+	            echo; echo 'The desktop did not answer after 60s. Is it running?  make up'; \
+	            echo 'Details:  make logs'; exit 1; \
+	        fi; \
+	        printf '.'; sleep 2; \
+	    done; \
+	    [ "$$i" -gt 0 ] && echo; \
+	fi; true
 	@./scripts/open-url '$(URL)/vnc.html?autoconnect=1&resize=remote'
+	@echo
+	@echo 'Two terminals, two jobs:'
+	@echo '  - THIS terminal, on your computer: every make command.'
+	@echo '      make turtlesim   then   make turtlesim-teleop'
+	@echo '  - The terminal INSIDE the browser desktop: ROS commands'
+	@echo '    (ros2, colcon, pkg). make does not work in there.'
+	@echo
+	@echo 'In the browser desktop:'
+	@echo '  - Right-click the background for a menu: turtlesim_node,'
+	@echo '    turtle_teleop_key, rqt, RViz.'
+	@echo '  - To drive the turtle, click the teleop window first, then use'
+	@echo '    the arrow keys. Keys go to whichever window has focus.'
 
 # A one-off container, so it works whether or not the desktop is running.
 shell: require-engine
@@ -98,9 +150,44 @@ turtlesim: require-engine
 	$(DESKTOP_EXEC) 'nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 &'
 	@echo 'turtlesim started on the browser desktop ($(URL)).'
 
-teleop: require-engine
-	$(DESKTOP_EXEC) "nohup xterm -title 'teleop (arrow keys)' -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key' >/tmp/teleop.log 2>&1 &"
-	@echo 'teleop window opened on the browser desktop; click it, then use the arrow keys.'
+# Named for turtlesim on purpose: "teleop" alone reads as generic robot
+# teleoperation, but turtle_teleop_key only ever drives turtlesim.
+turtlesim-teleop: require-engine
+	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key' >/tmp/teleop.log 2>&1 &"
+	@echo 'turtlesim teleop opened on the browser desktop; click it, then use the arrow keys.'
+
+# The old name, kept only to point at the new one rather than failing with
+# make's "No rule to make target".
+teleop:
+	@echo '`make teleop` is now `make turtlesim-teleop` -- it only drives turtlesim.'
+	@exit 2
+
+# --- Your own packages --------------------------------------------------------
+# Thin wrappers over `pkg`, which prints each real command before running it:
+# a student can see they could have typed `ros2 pkg create` or `colcon build`
+# themselves.  See docs/creating-packages.md.
+
+package: require-desktop
+	@[ -n "$(PKG)" ] || { \
+	    echo 'usage: make package PKG=name [TEMPLATE=pubsub|param] [PYTHON=1] [INTERFACES=1]'; \
+	    echo 'e.g.   make package PKG=my_robot TEMPLATE=pubsub'; exit 2; }
+	$(PKG_EXEC) 'pkg new $(PKG)$(if $(PYTHON), --python)$(if $(TEMPLATE), --template $(TEMPLATE))$(if $(INTERFACES), --interfaces)'
+
+build: require-desktop
+	$(PKG_EXEC) 'pkg build $(PKG)'
+
+# Foreground, so Ctrl-C stops the node.  A TTY is requested only when there is
+# one to give; without that check the engine refuses to run from scripts or CI.
+run: require-desktop
+	@[ -n "$(PKG)" ] && [ -n "$(NODE)" ] || { \
+	    echo 'usage: make run PKG=name NODE=executable'; \
+	    echo 'make build PKG=name  lists the executables it built.'; exit 2; }
+	@if [ -t 0 ]; then tty=''; else tty='-T'; fi; \
+	$(QUIET) $(COMPOSE) exec $$tty -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(SERVICE) \
+	    bash -lc 'pkg run $(PKG) $(NODE)'
+
+test: require-desktop
+	$(PKG_EXEC) 'pkg test $(PKG)'
 
 # podman-compose passes --color to `podman logs`, which Podman 3.x rejects, so
 # fall back to naming the container for the engine directly.
@@ -130,13 +217,17 @@ reset: require-engine
 	    else echo 'aborted; nothing was removed'; exit 1; fi; \
 	fi
 
-test:
+# The workstation's own smoke suite, not the student's tests: builds the image,
+# exercises every documented workflow, then removes its containers and volumes.
+# It runs as a separate compose project on port 6081, so those are its OWN
+# volumes -- safe to run while a student's desktop is up, with work in it.
+selftest:
 	./scripts/smoke-container
 
 lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
 	@if command -v shellcheck >/dev/null 2>&1; then \
-	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url scripts/run-quiet && echo 'shellcheck: ok'; \
+	    shellcheck docker/entrypoint.sh docker/scripts/* docker/bashrc.d/*.sh scripts/smoke-container scripts/compose-command scripts/base-image-digest scripts/check-host scripts/open-url scripts/run-quiet scripts/compose-up && echo 'shellcheck: ok'; \
 	else echo 'shellcheck not installed; skipping script lint'; fi
 
 # Prints the multi-arch index digest for the configured distribution, for

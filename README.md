@@ -16,13 +16,31 @@ also need `pip install --user -r requirements-host.txt`.
 ## Quick start
 
 ```sh
-make build     # first time; downloads and builds the image
+make image     # first time; downloads and builds the image
 make up        # start the desktop
 make open      # open http://localhost:6080 (or just open it yourself)
 ```
 
 `make engine` prints which container engine was detected, or explains what is
 missing if none was.
+
+**Two terminals, two jobs.** Every `make` command runs in a terminal on your own
+computer — the one where you typed `make up`. The terminal that opens *inside*
+the browser desktop is for ROS commands (`ros2`, `colcon`, `pkg`); `make`
+targets don't work in there, and it will tell you so if you try.
+
+Once turtlesim runs, move on to your own code:
+
+```sh
+make package PKG=my_robot TEMPLATE=pubsub   # prints the ros2 pkg create it runs
+make build PKG=my_robot                     # prints the colcon build it runs
+make run PKG=my_robot NODE=talker           # Ctrl-C to stop
+make test PKG=my_robot
+```
+
+Each prints the real command before running it, so you can see what you would
+have typed on a native ROS install — see
+[docs/creating-packages.md](docs/creating-packages.md).
 
 Then, in the browser desktop:
 
@@ -43,16 +61,20 @@ docker compose up -d
 
 | Command | What it does |
 |---|---|
-| `make build` | Build the image for the current architecture |
+| `make image` | Build the image for the current architecture |
 | `make up` | Start the browser desktop |
 | `make open` | Open, or print, the desktop URL |
 | `make shell` | A sourced ROS shell in a throwaway container |
 | `make turtlesim` | Launch turtlesim on the running desktop |
-| `make teleop` | Launch keyboard teleop on the running desktop |
+| `make turtlesim-teleop` | Drive turtlesim with the arrow keys (turtlesim only) |
 | `make logs` | Follow container logs |
 | `make down` | Stop containers, keep your work |
 | `make reset` | Delete containers **and volumes** (asks first) |
-| `make test` | Run the automated smoke tests |
+| `make selftest` | Check the workstation itself with the automated smoke tests |
+| `make package PKG=name` | Create a ROS package, optionally from a template |
+| `make build [PKG=name]` | `colcon build` your packages |
+| `make run PKG=name NODE=exe` | `ros2 run` a node in the foreground |
+| `make test [PKG=name]` | Run your packages' tests and report the real verdict |
 | `make lint` | Validate the compose file and shell scripts |
 | `make digest` | Print the base-image digest to pin in `.env` |
 | `make engine` | Show which container engine was detected |

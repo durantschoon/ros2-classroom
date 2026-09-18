@@ -30,7 +30,10 @@ trap 'rm -f "${status_file}"' EXIT HUP INT TERM
 
 # Swap the streams so stderr goes through the filter while stdout passes
 # straight through, then recover the command's own exit status.
-{ { "$@"; echo "$?" > "${status_file}"; } 2>&1 1>&3 | grep -vE "${PATTERN}" >&2; } 3>&1
+# --line-buffered keeps stderr in step with stdout when output is itself piped
+# (`make build | tee log`, CI); otherwise grep block-buffers and an echoed
+# `+ colcon build` line can land after colcon's own output.
+{ { "$@"; echo "$?" > "${status_file}"; } 2>&1 1>&3 | grep --line-buffered -vE "${PATTERN}" >&2; } 3>&1
 
 status="$(cat "${status_file}" 2>/dev/null || echo 1)"
 exit "${status:-1}"

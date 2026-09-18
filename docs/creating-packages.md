@@ -12,6 +12,23 @@ something that depends on itself.
 pkg new my_bot --template pubsub --build
 ```
 
+## From your own computer: the make targets
+
+The same operations are available as make targets, run from the terminal on your
+own computer rather than inside the desktop:
+
+| make target | runs, inside the workstation |
+|---|---|
+| `make package PKG=name [TEMPLATE=pubsub\|param] [PYTHON=1] [INTERFACES=1]` | `pkg new name ...` |
+| `make build [PKG=name]` | `pkg build [name]` → `colcon build` |
+| `make run PKG=name NODE=executable` | `pkg run name executable` → `ros2 run` |
+| `make test [PKG=name]` | `pkg test [name]` → `colcon test` + `colcon test-result` |
+
+Either way, every underlying `ros2` and `colcon` command is printed before it
+runs, quoted so you can paste it back into a shell. That is deliberate: these are
+the commands you would type on a native ROS install, and the helpers are meant
+to be outgrown.
+
 ## The two build types
 
 ROS 2 packages are either `ament_cmake` (C++) or `ament_python`. `pkg new`

@@ -105,6 +105,7 @@ COPY docker/bashrc.d/ros-workspace.sh /etc/bash.bashrc.d/ros-workspace.sh
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 COPY docker/scripts/ /usr/local/bin/
 COPY docker/templates/ /usr/share/ros-workstation/templates/
+COPY docker/desktop/welcome.txt /usr/share/ros-workstation/welcome.txt
 COPY docker/supervisord.conf /etc/supervisor/conf.d/ros-desktop.conf
 COPY docker/desktop/openbox-autostart /etc/xdg/openbox/autostart
 COPY docker/desktop/menu.xml /etc/xdg/openbox/menu.xml

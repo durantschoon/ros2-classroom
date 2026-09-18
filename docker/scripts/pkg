@@ -9,8 +9,34 @@ set -euo pipefail
 WORKSPACE="${WORKSPACE:-/workspace}"
 TEMPLATES="${ROS_WORKSTATION_TEMPLATES:-/usr/share/ros-workstation/templates}"
 
-run() { printf '+ %s\n' "$*" >&2; "$@"; }
+# Print a command so it can be pasted back into a shell and run as-is.  Plain
+# words stay bare for readability; anything else is single-quoted.  Printing
+# "$*" instead would show `--maintainer-name ROS Developer`, which re-parses as
+# two arguments -- and a pasteable command is the whole point of printing it.
+shell_quote() {
+    local out='' arg
+    for arg in "$@"; do
+        if [[ "${arg}" =~ ^[A-Za-z0-9_./:=@%+,-]+$ ]]; then
+            out+="${arg} "
+        else
+            out+="'${arg//\'/\'\\\'\'}' "
+        fi
+    done
+    printf '%s' "${out% }"
+}
+
+run() { printf '+ %s\n' "$(shell_quote "$@")" >&2; "$@"; }
 note() { printf '%s\n' "$*" >&2; }
+
+# The Makefile sets PKG_VIA_MAKE=1, so a student who typed `make package` is
+# pointed at `make build` rather than at a helper they have not seen yet.
+hint() {
+    if [ "${PKG_VIA_MAKE:-0}" = "1" ]; then
+        note "next: $1"
+    else
+        note "next: $2"
+    fi
+}
 
 usage() {
     cat >&2 <<USAGE
@@ -25,6 +51,7 @@ usage:
 
   pkg build [NAME...]         colcon build (all packages, or the named ones)
   pkg test [NAME...]          colcon test AND report results (see note below)
+  pkg run NAME EXECUTABLE     ros2 run, in the foreground; Ctrl-C stops it
   pkg list                    Packages in this workspace
 
 Examples:
@@ -256,7 +283,7 @@ install(TARGETS param_node DESTINATION lib/${PROJECT_NAME})'
     if [ "${do_build}" -eq 1 ]; then
         cmd_build "${name}"
     else
-        note "next: pkg build ${name}"
+        hint "make build PKG=${name}" "pkg build ${name}"
     fi
 }
 
@@ -269,6 +296,18 @@ cmd_build() {
     fi
     note ''
     note "built; open a new shell, or: source ${WORKSPACE}/install/setup.bash"
+    if [ "$#" -eq 1 ]; then
+        # This shell predates the build, so it cannot see the new package
+        # until the overlay is sourced.  ROS setup scripts read unset
+        # variables, hence the brief set +u.
+        set +u
+        # shellcheck disable=SC1091
+        . "${WORKSPACE}/install/setup.bash"
+        set -u
+        note "executables in $1:"
+        ros2 pkg executables "$1" 2>/dev/null | sed 's/^/  /' >&2 || true
+        hint "make run PKG=$1 NODE=<executable>" "pkg run $1 <executable>"
+    fi
 }
 
 cmd_test() {
@@ -284,6 +323,12 @@ cmd_test() {
     run colcon test-result --verbose
 }
 
+cmd_run() {
+    [ "$#" -ge 2 ] || { note 'usage: pkg run NAME EXECUTABLE [ARGS...]'; exit 2; }
+    printf '+ %s\n' "$(shell_quote ros2 run "$@")" >&2
+    exec ros2 run "$@"
+}
+
 cmd_list() {
     cd "${WORKSPACE}"
     run colcon list --names-only
@@ -295,6 +340,7 @@ case "${command}" in
     new)   cmd_new "$@" ;;
     build) cmd_build "$@" ;;
     test)  cmd_test "$@" ;;
+    run)   cmd_run "$@" ;;
     list)  cmd_list "$@" ;;
     *)     usage ;;
 esac

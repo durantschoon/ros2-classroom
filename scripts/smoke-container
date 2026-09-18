@@ -22,8 +22,22 @@ if [ -z "${COMPOSE:-}" ]; then
         exit 1
     fi
 fi
-echo "using: ${COMPOSE}"
-NOVNC_PORT="${NOVNC_PORT:-6080}"
+
+# The self-test runs as its OWN compose project: own volumes, own network, own
+# host port.  Its cleanup deletes volumes, so it must never share them with a
+# student's real workstation -- and before this, it did: running `make selftest`
+# "because something looked wrong" destroyed the student's /workspace.
+SELFTEST_PROJECT="${SELFTEST_PROJECT:-ros2-tutorials-selftest}"
+COMPOSE="${COMPOSE} -p ${SELFTEST_PROJECT}"
+# Exported so the `make package`/`make build` checks below, which run make as a
+# student would, address this project too rather than the student's.
+export COMPOSE
+# A separate host port lets the self-test run beside a student's own desktop
+# on 6080.  Inside the container, noVNC always listens on 6080.
+export NOVNC_PORT="${SELFTEST_NOVNC_PORT:-6081}"
+CONTAINER_NOVNC_PORT=6080
+
+echo "using: ${COMPOSE}  (isolated project; host port ${NOVNC_PORT})"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
@@ -48,7 +62,7 @@ in_desktop() {
 cleanup() {
     local status=$?
     if [ "${KEEP}" -eq 1 ]; then
-        echo; echo 'containers kept (--keep); remove them with: make reset YES=1'
+        echo; echo "containers kept (--keep); remove them with: ${COMPOSE} down -v"
     else
         echo; echo '== cleaning up'
         $COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
@@ -122,7 +136,7 @@ fi
 
 step 'Browser desktop'
 if $COMPOSE exec -T desktop curl --fail --silent --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors \
-        "http://127.0.0.1:${NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
+        "http://127.0.0.1:${CONTAINER_NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
     ok 'noVNC answers inside the container'
 else
     bad 'noVNC did not answer inside the container'
@@ -254,6 +268,52 @@ if grep -q '0 errors, 0 failures' <<<"${pkg_test_output}"; then
     ok 'pkg test reports a clean lint result for a generated package'
 else
     bad "pkg test did not report a clean lint result: $(tail -5 <<<"${pkg_test_output}")"
+fi
+
+step 'Student make targets (run from the host, as a student would)'
+# The roadmap's Stage 1 acceptance is about these targets, not `pkg` itself:
+# a student should get through package/build/test without typing an engine
+# command, and should see each real ros2/colcon command before it runs.
+make_out="$(make package PKG=make_smoke TEMPLATE=pubsub 2>&1 || true)"
+if grep -q '^+ ros2 pkg create make_smoke' <<<"${make_out}" \
+        && grep -q 'next: make build PKG=make_smoke' <<<"${make_out}"; then
+    ok 'make package prints the real command and points at make build'
+else
+    bad "make package output was not as expected: $(tail -3 <<<"${make_out}")"
+fi
+# A printed command is only useful if it can be pasted back.  The default
+# maintainer name has a space; unquoted, it would re-parse as two arguments.
+if grep -q -- "--maintainer-name 'ROS Developer'" <<<"${make_out}"; then
+    ok 'printed commands quote arguments so they paste correctly'
+else
+    bad 'printed ros2 pkg create line is not paste-safe'
+fi
+
+make_out="$(make build PKG=make_smoke 2>&1 || true)"
+if grep -q '^+ colcon build' <<<"${make_out}" \
+        && grep -q 'next: make run PKG=make_smoke' <<<"${make_out}"; then
+    ok 'make build prints colcon build and points at make run'
+else
+    bad "make build output was not as expected: $(tail -3 <<<"${make_out}")"
+fi
+
+make_out="$(make test PKG=make_smoke 2>&1 || true)"
+if grep -q '0 errors, 0 failures' <<<"${make_out}"; then
+    ok 'make test reports the real colcon test-result verdict'
+else
+    bad "make test did not report a clean result: $(tail -3 <<<"${make_out}")"
+fi
+
+# `make` exists inside the container, so a workstation target typed in the
+# wrong window must explain itself rather than fail with "No rule to make".
+# This command is expected to fail, so capture its status without tripping
+# the script's own set -e.
+guard_status=0
+guard_out="$(in_desktop 'cd /workspace && make turtlesim' 2>&1)" || guard_status=$?
+if [ "${guard_status}" -ne 0 ] && grep -q 'runs on your own computer' <<<"${guard_out}"; then
+    ok 'make typed inside the container explains where to run it'
+else
+    bad "make inside the container did not explain itself (exit ${guard_status})"
 fi
 
 step 'Persistence across container recreation'

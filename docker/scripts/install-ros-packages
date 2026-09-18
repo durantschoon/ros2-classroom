@@ -47,5 +47,5 @@ and `start`, but a container recreation (`docker compose up --force-recreate`,
 `down`, or an image rebuild) discards them.
 
 To keep them permanently, add them to EXTRA_ROS_PACKAGES / EXTRA_APT_PACKAGES
-in .env and run `make build` again.  See docs/package-management.md.
+in .env and run `make image` again.  See docs/package-management.md.
 NOTE

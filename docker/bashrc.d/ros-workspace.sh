@@ -30,3 +30,28 @@ if [ -f /usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash ]; then
     # shellcheck disable=SC1091
     . /usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash
 fi
+
+# `make` exists in here (build-essential), so a student who types a workstation
+# target in the wrong window gets "No rule to make target 'turtlesim'", which
+# reads like the project is broken.  Explain instead -- but only for our own
+# target names, and only where there is no Makefile, so real make use in a
+# directory with a Makefile is untouched.
+make() {
+    if [ ! -f Makefile ] && [ ! -f makefile ] && [ ! -f GNUmakefile ]; then
+        case "${1:-}" in
+            doctor|image|up|open|turtlesim|turtlesim-teleop|teleop|shell|down|package|build|run|test|\
+            engine|logs|selftest|lint|digest|reset|help)
+                printf '%s\n' \
+                    "\`make $1\` runs on your own computer, not inside the workstation." \
+                    'Type it in the terminal where you ran `make up`.' \
+                    '' \
+                    'In here, use ROS commands directly, e.g.:' \
+                    '  ros2 run turtlesim turtlesim_node' \
+                    '  pkg new my_pkg --template pubsub     (what `make package` runs)' \
+                    '  pkg build my_pkg                     (what `make build` runs)' >&2
+                return 2
+                ;;
+        esac
+    fi
+    command make "$@"
+}

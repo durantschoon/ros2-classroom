@@ -19,7 +19,23 @@ USAGE
     exit 2
 }
 
-run() { printf '+ %s\n' "$*" >&2; "$@"; }
+# Print a command so it can be pasted back into a shell and run as-is.  Plain
+# words stay bare for readability; anything else is single-quoted.  Printing
+# "$*" instead would show `--maintainer-name ROS Developer`, which re-parses as
+# two arguments -- and a pasteable command is the whole point of printing it.
+shell_quote() {
+    local out='' arg
+    for arg in "$@"; do
+        if [[ "${arg}" =~ ^[A-Za-z0-9_./:=@%+,-]+$ ]]; then
+            out+="${arg} "
+        else
+            out+="'${arg//\'/\'\\\'\'}' "
+        fi
+    done
+    printf '%s' "${out% }"
+}
+
+run() { printf '+ %s\n' "$(shell_quote "$@")" >&2; "$@"; }
 
 [ "$#" -ge 1 ] || usage
 command="$1"; shift

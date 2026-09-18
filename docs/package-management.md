@@ -31,7 +31,7 @@ EXTRA_APT_PACKAGES=python3-pytest gdb
 Then rebuild:
 
 ```sh
-make build
+make image
 make up
 ```
 

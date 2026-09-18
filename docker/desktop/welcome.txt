@@ -1,0 +1,6 @@
+  This terminal is INSIDE the ROS workstation.
+
+  Type ROS commands here:   ros2 ...   colcon ...   pkg ...
+  Type make commands in the terminal on your own computer, where you
+  ran `make up` -- they do not work in here.
+

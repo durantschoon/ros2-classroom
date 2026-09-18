@@ -1,0 +1,46 @@
+#!/bin/sh
+# Start the workstation, recreating the desktop only when its image is stale.
+#
+# Docker Compose recreates a container whose image has changed; podman-compose
+# does not -- it only creates containers that are missing.  Without this check,
+# `make image` followed by `make up` keeps running the OLD image on Podman, with
+# no warning.  Comparing image ids here gives both engines Docker's behaviour.
+#
+# Expects COMPOSE and ENGINE from the Makefile.
+set -eu
+
+cd "$(dirname "$0")/.."
+
+compose="${COMPOSE:?COMPOSE is not set; run this through make}"
+engine="${ENGINE:?ENGINE is not set; run this through make}"
+image="${IMAGE_NAME:-ros2-tutorials}:${ROS_DISTRO:-lyrical}"
+
+# Docker reports ids as sha256:<hex>, Podman as bare <hex>.
+bare() { sed 's/^sha256://'; }
+
+current="$($engine image inspect --format '{{.Id}}' "${image}" 2>/dev/null \
+    || $engine image inspect --format '{{.Id}}' "localhost/${image}" 2>/dev/null \
+    || true)"
+
+# Both compose implementations set these labels.  The project name is fixed by
+# `name:` in compose.yaml.
+container="$($engine ps -a -q \
+    --filter label=com.docker.compose.project=ros2-tutorials \
+    --filter label=com.docker.compose.service=desktop 2>/dev/null | head -1)"
+
+recreate=''
+if [ -n "${container}" ] && [ -n "${current}" ]; then
+    running="$($engine inspect --format '{{.Image}}' "${container}" 2>/dev/null || true)"
+    if [ "$(printf '%s' "${running}" | bare)" != "$(printf '%s' "${current}" | bare)" ]; then
+        echo 'The image was rebuilt since this desktop started, so it will be recreated.'
+        echo 'Kept: /workspace and /home/ros (your code, builds, and settings).'
+        echo 'Lost: anything added with apt or install-ros-packages inside the old container.'
+        echo
+        recreate='--force-recreate'
+    fi
+fi
+
+# shellcheck disable=SC2086  # compose may be two words, e.g. "docker compose"
+echo "+ ${compose} up -d${recreate:+ ${recreate}}"
+# shellcheck disable=SC2086
+exec ${compose} up -d ${recreate}

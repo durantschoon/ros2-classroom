@@ -30,7 +30,7 @@ status, disk and RAM, and names the fix for anything missing.
 **Engine:** Docker Desktop, or `brew install podman && podman machine init && podman machine start`.
 
 - [ ] `make doctor` reports an engine and passes resources
-- [ ] `make build` completes — **watch:** it must build `linux/arm64` natively
+- [ ] `make image` completes — **watch:** it must build `linux/arm64` natively
 - [ ] Confirm the arch: `docker image inspect ros2-tutorials:lyrical --format '{{.Architecture}}'` → `arm64`
 - [ ] `make up` then `make open` — browser opens the desktop
 - [ ] Desktop renders: Openbox background, a terminal already open
@@ -39,7 +39,7 @@ status, disk and RAM, and names the fix for anything missing.
 - [ ] `install-ros-packages demo-nodes-cpp` succeeds in the desktop terminal
 - [ ] `tutorial clone https://github.com/ros/ros_tutorials.git && tutorial deps && tutorial build`
 - [ ] `make down && make up` — `/workspace/src` still has the clone
-- [ ] `make test` — record the pass/fail counts
+- [ ] `make selftest` — record the pass/fail counts
 - [ ] `make down` stops within the grace period
 
 **Watch for:** if the build falls back to `linux/amd64` it will run under Rosetta
@@ -59,7 +59,7 @@ Podman inside WSL.
 
 - [ ] Repo is cloned inside the WSL filesystem (`~/...`, **not** `/mnt/c/...`)
 - [ ] `make doctor` reports an engine
-- [ ] `make build` completes
+- [ ] `make image` completes
 - [ ] `make up` then `make open` — **watch:** this must open a Windows browser,
       not a text editor. That failure mode was real; see `scripts/open-url`
 - [ ] Desktop renders in the Windows browser at `localhost:6080`
@@ -68,7 +68,7 @@ Podman inside WSL.
 - [ ] `install-ros-packages demo-nodes-cpp` succeeds
 - [ ] `tutorial clone ... && tutorial deps && tutorial build`
 - [ ] Persistence across `make down && make up`
-- [ ] `make test` — record counts
+- [ ] `make selftest` — record counts
 - [ ] `make down` clean
 
 ### B2. From PowerShell
@@ -78,7 +78,7 @@ Make is usually absent; use the documented plain commands.
 - [ ] `docker compose build`
 - [ ] `docker compose up -d`
 - [ ] Browse to `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`
-- [ ] Desktop renders; turtlesim and teleop work from the right-click menu
+- [ ] Desktop renders; turtlesim and turtle_teleop_key work from the right-click menu
 - [ ] `docker compose down`
 
 **Watch for:** a repo on `/mnt/c` makes the build crawl; Docker Desktop must
@@ -92,14 +92,14 @@ Windows shim and fails.
 **Engine:** Docker Engine + Compose plugin, or rootless Podman 4.4+.
 
 - [ ] `make doctor` — note whether it reports docker or podman
-- [ ] `make build`
+- [ ] `make image`
 - [ ] `make up` then `make open` — `xdg-open` path, needs a real browser installed
 - [ ] Desktop renders
 - [ ] turtlesim appears; **arrow keys move the turtle**
 - [ ] `install-ros-packages demo-nodes-cpp`
 - [ ] `tutorial clone ... && tutorial deps && tutorial build`
 - [ ] Persistence across `make down && make up`
-- [ ] `make test` — record counts
+- [ ] `make selftest` — record counts
 - [ ] `make down` clean
 - [ ] If Podman: confirm no CNI warnings leak through the Make targets, and that
       `VERBOSE=1 make up` shows them again
@@ -130,16 +130,16 @@ ros_distro:     lyrical
 
 ## Results
 
-| Machine | Decision points | Date | `make test` | Manual steps | Notes |
+| Machine | Decision points | Date | `make selftest` | Manual steps | Notes |
 |---|---|---|---|---|---|
-| WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ teleop ☐ | podman-compose 1.6.0; image 3.1 GB |
+| WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ arrow keys ☐ | podman-compose 1.6.0; image 3.1 GB |
 | macOS | | | | ☐ | |
 | Windows 11 (WSL shell) | | | | ☐ | |
 | Windows 11 (PowerShell) | | | | ☐ | |
 | Pure Linux | | | | ☐ | |
 
 A row counts as complete only when a human has done the browser steps. An
-automated `make test` pass cannot tell you the desktop rendered or that the
+automated `make selftest` pass cannot tell you the desktop rendered or that the
 arrow keys worked.
 
 ## If something fails
