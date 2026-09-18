@@ -164,6 +164,14 @@ class ComposeUpTests(ScriptTestCase):
         self.run_with("compose-stub -p=other")
         self.assertEqual("other", self.project_filter())
 
+    def test_an_attached_short_project_flag_names_the_project(self):
+        self.run_with("compose-stub -pother")
+        self.assertEqual("other", self.project_filter())
+
+    def test_a_flag_that_merely_starts_with_p_is_not_a_project(self):
+        self.run_with("compose-stub --profile demo")
+        self.assertEqual("ros2-tutorials", self.project_filter())
+
     def test_a_long_project_flag_in_compose_names_the_project(self):
         self.run_with("compose-stub --project-name other")
         self.assertEqual("other", self.project_filter())

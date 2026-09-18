@@ -101,6 +101,11 @@ def project_name(compose_words: Sequence[str], env_project: str) -> str:
             if word.startswith(flag + "="):
                 found = word[len(flag) + 1:]
                 break
+        else:
+            # The attached short form, -pNAME, which compose also accepts.
+            # "--profile" and friends start with "--", so they cannot match.
+            if word.startswith("-p") and not word.startswith("--") and len(word) > 2:
+                found = word[2:]
         index += 1
     # A later flag beats an earlier one, as it does for compose itself.
     if found:
