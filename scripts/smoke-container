@@ -114,7 +114,16 @@ if [ "${image_user}" = 'ros' ]; then
 else
     bad "the image default user is '${image_user:-unset}', not ros"
 fi
-if [ "$($COMPOSE exec -T desktop ps -o user= -C Xvfb 2>/dev/null | tr -d ' \r' | head -1)" = 'ros' ]; then
+# The readiness probe above only proves that `exec` works, and supervisor may
+# not have started Xvfb yet: under load this check failed about one run in
+# three.  Wait for Xvfb to exist before asking who owns it.
+xvfb_user=''
+for _ in $(seq 1 30); do
+    xvfb_user="$($COMPOSE exec -T desktop ps -o user= -C Xvfb 2>/dev/null | tr -d ' \r' | head -1)"
+    [ -n "${xvfb_user}" ] && break
+    sleep 1
+done
+if [ "${xvfb_user}" = 'ros' ]; then
     ok 'desktop programs run as the non-root ros user'
 else
     bad 'desktop programs are not running as ros'
