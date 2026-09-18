@@ -119,6 +119,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint \
         /usr/local/bin/init-workspace \
         /usr/local/bin/tutorial \
         /usr/local/bin/pkg \
+        /usr/local/bin/turtlesim-teleop \
     && mkdir -p /workspace/src /var/log/supervisor \
     && chown -R ${USER_UID}:${USER_GID} /workspace
 
