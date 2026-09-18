@@ -278,6 +278,35 @@ else
     bad "pkg test did not report a clean lint result: $(tail -5 <<<"${pkg_test_output}")"
 fi
 
+# The reason `pkg test` exists: `colcon test` exits 0 even when a test fails.
+# Break one file's formatting, require a non-zero exit, and put the file back
+# so later steps see the package as it was.
+broken_status=0
+in_desktop 'f=/workspace/src/pkg_smoke_pubsub/src/talker.cpp
+cp "$f" /tmp/talker.cpp.orig
+sed -i "s/^  rclcpp::init/rclcpp::init/" "$f"
+pkg test pkg_smoke_pubsub >/tmp/pkg-smoke-broken.log 2>&1; status=$?
+cp /tmp/talker.cpp.orig "$f"
+exit "$status"' >/dev/null 2>&1 || broken_status=$?
+if [ "${broken_status}" -ne 0 ]; then
+    ok 'pkg test exits non-zero when a test really fails'
+else
+    bad 'pkg test exited 0 although a style test should have failed'
+fi
+
+# That run leaves a FAILED result recorded for pkg_smoke_pubsub, on purpose.
+# Testing a different package must not report it: the verdict is scoped to the
+# package that was tested.  (It once was not, and `make test PKG=a` showed
+# package b's stale failures.)
+scoped_out="$(in_desktop 'pkg new pkg_smoke_scoped --build >/dev/null 2>&1; pkg test pkg_smoke_scoped' 2>&1 || true)"
+if grep -q '0 errors, 0 failures' <<<"${scoped_out}"; then
+    ok "pkg test reads only the tested package's results"
+else
+    bad "pkg test leaked another package's results: $(grep Summary <<<"${scoped_out}" | tail -1)"
+fi
+# Leave the workspace with passing results recorded, as later steps found it.
+in_desktop 'pkg test pkg_smoke_pubsub' >/dev/null 2>&1 || true
+
 step 'Student make targets (run from the host, as a student would)'
 # The roadmap's Stage 1 acceptance is about these targets, not `pkg` itself:
 # a student should get through package/build/test without typing an engine
@@ -396,6 +425,18 @@ if [ "${tbuild_status}" -eq 0 ] \
     ok 'tutorial build echoes colcon build --packages-select and succeeds'
 else
     bad "tutorial build smoke_pkg failed (exit ${tbuild_status})"
+fi
+
+# tutorial deps had no coverage at all.  It needs the network, as the package
+# installation step above already does.
+tdeps_status=0
+tdeps_out="$(in_desktop 'tutorial deps' 2>&1)" || tdeps_status=$?
+if [ "${tdeps_status}" -eq 0 ] \
+        && grep -q '^+ rosdep update --rosdistro' <<<"${tdeps_out}" \
+        && grep -q '^+ rosdep install --from-paths /workspace/src --ignore-src' <<<"${tdeps_out}"; then
+    ok 'tutorial deps echoes both rosdep commands and succeeds'
+else
+    bad "tutorial deps failed (exit ${tdeps_status}): $(tail -3 <<<"${tdeps_out}")"
 fi
 
 pkg_status=0
