@@ -41,7 +41,7 @@ work. Stages that may run at the same time must isolate it further, because
 they would otherwise share the project, host port, and image tag:
 
 ```sh
-SELFTEST_PROJECT=ros2-tutorials-stNN SELFTEST_NOVNC_PORT=60NN IMAGE_NAME=ros2-tutorials-stNN make selftest
+SELFTEST_PROJECT=ros2-tutorials-stNN SELFTEST_NOVNC_PORT=60NN SELFTEST_ROS_DOMAIN_ID=NN IMAGE_NAME=ros2-tutorials-stNN make selftest
 ```
 
 Known gaps, as of scaffolding:
@@ -113,7 +113,7 @@ the report's Blocked section instead of improvising an answer.
   tests-only stage *before* it is ported. Never change the tests and the code
   they judge in the same stage.
 - Stages running concurrently get distinct `SELFTEST_PROJECT`,
-  `SELFTEST_NOVNC_PORT`, and `IMAGE_NAME`.
+  `SELFTEST_NOVNC_PORT`, `SELFTEST_ROS_DOMAIN_ID`, and `IMAGE_NAME`.
 - Executors attempt their own push and expect credential failure; the
   coordinator pushes and merges.
 - Review is the diff plus an independent rerun of the gates, never reading the

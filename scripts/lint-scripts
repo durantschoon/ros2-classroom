@@ -25,14 +25,16 @@ REPO = Path(__file__).resolve().parent.parent
 SCRIPT_DIRS = ("scripts", "docker/scripts")
 EXTRA_SCRIPTS = ("docker/entrypoint.sh", "docker/desktop/openbox-autostart")
 SOURCED_BASH = "docker/bashrc.d/*.sh"  # sourced by bash; no shebang
+HOST_TESTS = "tests/host/*.py"  # unittest modules; imported, so no shebang
 
 # Shell files that stay shell permanently, so their shellcheck findings fail
 # the lint. Every other shell file is slated for the Python port and is
 # advisory only. See docs/roadmap.md, "Language: Python replaces shell".
 ENFORCED_SHELL = ("docker/entrypoint.sh", SOURCED_BASH, "docker/desktop/openbox-autostart")
 
-# Host-side scripts must parse as Python 3.9 (docs/roadmap.md).
-HOST_DIR = "scripts/"
+# Host-side scripts, and the tests that run beside them on a student's or a
+# contributor's machine, must parse as Python 3.9 (docs/roadmap.md).
+HOST_DIRS = ("scripts/", "tests/host/")
 HOST_PYTHON = (3, 9)
 
 SHELLCHECK_IMAGE = "docker.io/koalaman/shellcheck:v0.11.0"
@@ -78,6 +80,8 @@ def interpreter(first_line: str) -> Optional[str]:
 def classify(path: str, first_line: str) -> Kind:
     if fnmatch.fnmatch(path, SOURCED_BASH):
         return Kind.SOURCED_BASH
+    if fnmatch.fnmatch(path, HOST_TESTS):
+        return Kind.PYTHON
     name = interpreter(first_line)
     if name in ("sh", "bash"):
         return Kind.SHELL
@@ -91,7 +95,7 @@ def is_enforced(path: str) -> bool:
 
 
 def is_host(path: str) -> bool:
-    return path.startswith(HOST_DIR)
+    return path.startswith(HOST_DIRS)
 
 
 def check_python(path: str, source: str) -> Result:
@@ -164,6 +168,7 @@ def discover(repo: Path) -> List[str]:
         found.update(p for p in (repo / d).iterdir() if p.is_file())
     found.update(repo / p for p in EXTRA_SCRIPTS)
     found.update(repo.glob(SOURCED_BASH))
+    found.update(repo.glob(HOST_TESTS))
     return sorted(p.relative_to(repo).as_posix() for p in found)
 
 
