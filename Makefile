@@ -143,8 +143,9 @@ open:
 	@echo 'In the browser desktop:'
 	@echo '  - Right-click the background for a menu: turtlesim_node,'
 	@echo '    turtle_teleop_key, rqt, RViz.'
-	@echo '  - To drive the turtle, click the teleop window first, then use'
-	@echo '    the arrow keys. Keys go to whichever window has focus.'
+	@echo '  - To drive the turtle, click inside the white teleop window'
+	@echo '    first, then use the arrow keys. Keys go to whichever window'
+	@echo '    has focus.'
 	@echo
 	@echo 'About the browser page:'
 	@echo '  - It may say "Disconnected" after sleep or a network blip. That is'
@@ -162,12 +163,29 @@ shell: require-engine
 turtlesim: require-engine
 	$(DESKTOP_EXEC) 'nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 &'
 	@echo 'turtlesim started on the browser desktop ($(URL)).'
+	@echo
+	@echo 'Next, to drive the turtle:  make turtlesim-teleop'
+	@echo '  That opens a white window titled "turtlesim teleop (arrow keys)".'
+	@echo '  1. Click inside that white window first. Keys only reach the'
+	@echo '     window that has focus.'
+	@echo '  2. Then press the arrow keys. Try those before the letter keys:'
+	@echo '     arrows drive and turn, letters snap to fixed headings.'
 
 # Named for turtlesim on purpose: "teleop" alone reads as generic robot
-# teleoperation, but turtle_teleop_key only ever drives turtlesim.
+# teleoperation, but turtle_teleop_key only ever drives turtlesim.  The colours
+# are pinned because the instructions tell students to click "the white
+# window"; xterm's default would otherwise depend on which X resources load.
 turtlesim-teleop: require-engine
-	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key' >/tmp/teleop.log 2>&1 &"
-	@echo 'turtlesim teleop opened on the browser desktop; click it, then use the arrow keys.'
+	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -bg white -fg black -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key' >/tmp/teleop.log 2>&1 &"
+	@echo 'turtlesim teleop opened on the browser desktop.'
+	@echo
+	@echo '  1. Click inside the WHITE window titled "turtlesim teleop (arrow'
+	@echo '     keys)". Keys only reach the window that has focus: typing in'
+	@echo '     the blue turtlesim window, or in this terminal, does nothing.'
+	@echo '  2. Then press the arrow keys: up and down drive, left and right'
+	@echo '     turn. Start there. The lowercase letter keys (g b v c d e r t)'
+	@echo '     snap the turtle to fixed headings, which makes more sense once'
+	@echo '     you have driven it with the arrows. f cancels a turn; q quits.'
 
 # The old name, kept only to point at the new one rather than failing with
 # make's "No rule to make target".

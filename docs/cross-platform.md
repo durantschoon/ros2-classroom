@@ -204,8 +204,12 @@ inside the desktop as usual.
 start. Check `docker compose ps` for the health status and `make logs` for
 supervisor output.
 
-**The turtle does not move.** Keyboard focus follows the mouse into the teleop
-xterm; click that window inside the noVNC view first.
+**The turtle does not move.** Click inside the white window titled "turtlesim
+teleop (arrow keys)" first — keys only reach the window with focus, so typing
+in the blue turtlesim window or in your host terminal does nothing. Then use the
+arrow keys: up and down drive, left and right turn. Try those before the letter
+keys, which snap the turtle to fixed headings and are easier to follow once
+you've driven it with the arrows.
 
 **`make turtlesim` says the container is not running.** Run `make up` first;
 `make turtlesim` and `make turtlesim-teleop` attach to a running desktop.

@@ -14,7 +14,7 @@
     </item>
     <item label="turtle_teleop_key">
       <action name="Execute">
-        <command>xterm -title 'turtlesim teleop (arrow keys)' -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key'</command>
+        <command>xterm -title 'turtlesim teleop (arrow keys)' -bg white -fg black -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key'</command>
       </action>
     </item>
     <separator label="Tools"/>
