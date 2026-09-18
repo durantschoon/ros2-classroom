@@ -335,7 +335,9 @@ make test -- run your packages' tests and report the real verdict
 
   What it runs
     colcon test [--packages-select <name>]
-    colcon test-result --verbose
+    colcon test-result --verbose [--test-result-base build/<name>]
+    With PKG=name, only that package's results are read, so another
+    package's old failures cannot leak into the verdict.
 
   Why two commands: colcon test exits successfully even when tests fail.
   The verdict only comes from colcon test-result, so this runs both, and

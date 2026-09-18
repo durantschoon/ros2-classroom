@@ -567,7 +567,18 @@ def cmd_test(args: List[str]) -> int:
     run(["colcon", "test"] + select)
     note("")
     note("colcon test always exits 0; the real verdict comes from test-result:")
-    return run(["colcon", "test-result", "--verbose"])
+    if not args:
+        return run(["colcon", "test-result", "--verbose"])
+    # Read the verdict of the packages that were tested, and only those.
+    # Without --test-result-base, test-result reports every result recorded in
+    # the workspace, so testing package A would show -- and exit with -- stale
+    # failures left behind by package B.
+    worst = 0
+    for package in args:
+        status = run(["colcon", "test-result", "--verbose",
+                      "--test-result-base", str(ws / "build" / package)])
+        worst = max(worst, status)
+    return worst
 
 
 def cmd_run(args: List[str]) -> int:
