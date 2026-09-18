@@ -1,39 +1,111 @@
-#!/bin/sh
-# Run a command, dropping engine warnings that are known-harmless HERE, and
-# nothing else.  Set VERBOSE=1 to see the unfiltered output.
-#
-# Only these two are filtered, both from Podman 3.x:
-#
-#   "Error validating CNI config file ... plugin firewall does not support
-#    config version 1.0.0"
-#       Podman 3.4 writes cniVersion 1.0.0; Ubuntu 22.04's firewall plugin
-#       only advertises 0.4.0, so Podman skips that one plugin.  bridge and
-#       portmap both support 1.0.0 and load normally, which is why container
-#       networking, host port publishing, and DDS discovery all work.  Fixed
-#       properly by Podman 4.4+ or a newer containernetworking-plugins.
-#
-#   "/ is not a shared mount"
-#       Mount propagation for bind mounts.  This project uses named volumes.
-#
-# Anything else the engine prints reaches the user untouched: the point is to
-# stop two specific false alarms, not to hide errors.
-set -u
+#!/usr/bin/env python3
+"""Run a command, dropping engine warnings that are known-harmless HERE, and
+nothing else.  Set VERBOSE=1 to see the unfiltered output.
 
-PATTERN='Error validating CNI config file|is not a shared mount'
+Only these two are filtered, both from Podman 3.x:
 
-if [ "${VERBOSE:-0}" = "1" ]; then
-    exec "$@"
-fi
+  "Error validating CNI config file ... plugin firewall does not support
+   config version 1.0.0"
+      Podman 3.4 writes cniVersion 1.0.0; Ubuntu 22.04's firewall plugin
+      only advertises 0.4.0, so Podman skips that one plugin.  bridge and
+      portmap both support 1.0.0 and load normally, which is why container
+      networking, host port publishing, and DDS discovery all work.  Fixed
+      properly by Podman 4.4+ or a newer containernetworking-plugins.
 
-status_file="$(mktemp)"
-trap 'rm -f "${status_file}"' EXIT HUP INT TERM
+  "/ is not a shared mount"
+      Mount propagation for bind mounts.  This project uses named volumes.
 
-# Swap the streams so stderr goes through the filter while stdout passes
-# straight through, then recover the command's own exit status.
-# --line-buffered keeps stderr in step with stdout when output is itself piped
-# (`make build | tee log`, CI); otherwise grep block-buffers and an echoed
-# `+ colcon build` line can land after colcon's own output.
-{ { "$@"; echo "$?" > "${status_file}"; } 2>&1 1>&3 | grep --line-buffered -vE "${PATTERN}" >&2; } 3>&1
+Anything else the engine prints reaches the user untouched: the point is to
+stop two specific false alarms, not to hide errors.
 
-status="$(cat "${status_file}" 2>/dev/null || echo 1)"
-exit "${status:-1}"
+Only stderr is filtered.  stdout and stdin are inherited, never piped, so an
+interactive `make run` keeps its terminal, and stderr is forwarded line by line
+as it arrives rather than buffered until exit.
+
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
+
+import os
+import re
+import signal
+import subprocess
+import sys
+from typing import List, Sequence
+
+PATTERN = re.compile(rb"Error validating CNI config file|is not a shared mount")
+
+# What a POSIX shell reports for a command it could not execute.
+EXIT_NOT_RUN = 127
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def is_noise(line: bytes) -> bool:
+    """True for the two known-harmless Podman 3.x warnings, and nothing else."""
+    return PATTERN.search(line) is not None
+
+
+def terminated(line: bytes) -> bytes:
+    """The line with a newline, as the grep this replaced also guaranteed."""
+    return line if line.endswith(b"\n") else line + b"\n"
+
+
+def wants_verbose(value: str) -> bool:
+    """VERBOSE=1 and only 1 turns the filter off, as it always has."""
+    return value == "1"
+
+
+def exit_status(returncode: int) -> int:
+    """A wait() status as a shell exit code: 128 + N for death by signal N."""
+    return 128 - returncode if returncode < 0 else returncode
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def forward(stream, out) -> None:
+    """Copy stderr through the filter, one line at a time, flushing each."""
+    for line in iter(stream.readline, b""):
+        if is_noise(line):
+            continue
+        out.write(terminated(line))
+        out.flush()
+
+
+def run_filtered(argv: Sequence[str]) -> int:
+    # A do-nothing handler keeps Ctrl-C from raising KeyboardInterrupt here: the
+    # child is in the same process group and gets the SIGINT too, so the right
+    # thing is to wait for it and report its status.  Unlike SIG_IGN, a handler
+    # is reset to the default in the child across exec, so the child still dies.
+    signal.signal(signal.SIGINT, lambda signum, frame: None)
+    try:
+        child = subprocess.Popen(list(argv), stderr=subprocess.PIPE)
+    except OSError as err:
+        print("run-quiet: {}: {}".format(argv[0], err.strerror), file=sys.stderr)
+        return EXIT_NOT_RUN
+    with child.stderr:
+        forward(child.stderr, sys.stderr.buffer)
+    return exit_status(child.wait())
+
+
+def run_verbose(argv: Sequence[str]) -> int:
+    try:
+        os.execvp(argv[0], list(argv))
+    except OSError as err:
+        print("run-quiet: {}: {}".format(argv[0], err.strerror), file=sys.stderr)
+    return EXIT_NOT_RUN
+
+
+def main(argv: Sequence[str]) -> int:
+    command = list(argv)  # type: List[str]
+    if not command:
+        return 0
+    if wants_verbose(os.environ.get("VERBOSE", "0")):
+        return run_verbose(command)
+    return run_filtered(command)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main(sys.argv[1:]))

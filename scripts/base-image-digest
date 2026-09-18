@@ -1,26 +1,122 @@
-#!/bin/sh
-# Print the multi-architecture index digest of ros:<distro>-ros-base.
-#
-# Used by `make digest` when buildx is unavailable.  Only the registry API is
-# needed, so this works before anything has been pulled.
-set -eu
+#!/usr/bin/env python3
+"""Print the multi-architecture index digest of ros:<distro>-ros-base.
 
-distro="${1:-lyrical}"
-repo="library/ros"
-tag="${distro}-ros-base"
+Used by `make digest` when buildx is unavailable.  Only the registry API is
+needed, so this works before anything has been pulled.
 
-token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" \
-    | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+The fetching is done by `curl`, as a subprocess, on purpose: it is the one
+network seam the tests can replace, and it keeps this script dependent on
+nothing but a tool every supported host already has.
 
-[ -n "${token}" ] || { echo "could not obtain a registry token" >&2; exit 1; }
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
 
-digest=$(curl -fsS -I \
-    -H "Authorization: Bearer ${token}" \
-    -H 'Accept: application/vnd.oci.image.index.v1+json' \
-    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-    "https://registry-1.docker.io/v2/${repo}/manifests/${tag}" \
-    | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p')
+import re
+import signal
+import subprocess
+import sys
+from typing import List, Sequence
 
-[ -n "${digest}" ] || { echo "no digest for ros:${tag}" >&2; exit 1; }
+REPO = "library/ros"
+DEFAULT_DISTRO = "lyrical"
 
-echo "${digest}"
+TOKEN_URL = (
+    "https://auth.docker.io/token"
+    "?service=registry.docker.io&scope=repository:{repo}:pull"
+)
+MANIFEST_URL = "https://registry-1.docker.io/v2/{repo}/manifests/{tag}"
+
+# Both spellings of "this is a multi-architecture index", so the registry
+# returns the index digest rather than one platform's manifest.
+INDEX_MEDIA_TYPES = (
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+)
+
+# The registry answers the token request with JSON on one line.
+_TOKEN = re.compile(r'.*"token":"([^"]*)"')
+
+# HTTP header names are case-insensitive, so this match is too.  The shell this
+# replaced varied only the first letter of each word and so missed, for example,
+# DOCKER-CONTENT-DIGEST.
+_DIGEST_HEADER = "docker-content-digest: "
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def parse_distro(argv: Sequence[str]) -> str:
+    return argv[0] if argv else DEFAULT_DISTRO
+
+
+def token_argv(repo: str) -> List[str]:
+    return ["curl", "-fsS", TOKEN_URL.format(repo=repo)]
+
+
+def manifest_argv(repo: str, tag: str, token: str) -> List[str]:
+    argv = ["curl", "-fsS", "-I", "-H", "Authorization: Bearer " + token]
+    for media_type in INDEX_MEDIA_TYPES:
+        argv.extend(["-H", "Accept: " + media_type])
+    argv.append(MANIFEST_URL.format(repo=repo, tag=tag))
+    return argv
+
+
+def parse_token(body: str) -> str:
+    """The bearer token in the registry's reply, or '' when there is none."""
+    found = [m.group(1) for m in (_TOKEN.match(line) for line in body.split("\n")) if m]
+    return "\n".join(found)
+
+
+def parse_digest(headers: str) -> str:
+    """The Docker-Content-Digest value, or '' when the header is absent.
+
+    Carriage returns are dropped first: `curl -I` emits CRLF line endings, and a
+    stray \\r in ROS_BASE_DIGEST breaks the build that pastes it.
+    """
+    found = []
+    for line in headers.replace("\r", "").split("\n"):
+        if line[: len(_DIGEST_HEADER)].lower() == _DIGEST_HEADER:
+            found.append(line[len(_DIGEST_HEADER):])
+    return "\n".join(found)
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def fetch(argv: Sequence[str]) -> str:
+    """Run curl and return its stdout; its own error messages reach stderr.
+
+    A failed request is an expected condition here, not an exception: the
+    caller decides what a missing token or digest means.
+    """
+    try:
+        completed = subprocess.run(
+            list(argv), stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, check=False
+        )
+    except OSError as err:
+        print("could not run curl: {}".format(err), file=sys.stderr)
+        return ""
+    return completed.stdout.decode("utf-8", errors="replace")
+
+
+def main(argv: Sequence[str]) -> int:
+    distro = parse_distro(argv)
+    tag = "{}-ros-base".format(distro)
+
+    token = parse_token(fetch(token_argv(REPO)))
+    if not token:
+        print("could not obtain a registry token", file=sys.stderr)
+        return 1
+
+    digest = parse_digest(fetch(manifest_argv(REPO, tag, token)))
+    if not digest:
+        print("no digest for ros:{}".format(tag), file=sys.stderr)
+        return 1
+
+    print(digest)
+    return 0
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main(sys.argv[1:]))
