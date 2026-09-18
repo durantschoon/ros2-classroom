@@ -36,6 +36,12 @@ export COMPOSE
 # on 6080.  Inside the container, noVNC always listens on 6080.
 export NOVNC_PORT="${SELFTEST_NOVNC_PORT:-6081}"
 CONTAINER_NOVNC_PORT=6080
+# Its own ROS domain as well.  On Podman 3.x every container lands on Podman's
+# default network whatever compose.yaml declares, so with a shared domain the
+# self-test's nodes appear in a student's ROS graph and theirs in ours -- and a
+# student's own talker could satisfy the DDS check below.  compose.yaml reads
+# ROS_DOMAIN_ID from the environment.
+export ROS_DOMAIN_ID="${SELFTEST_ROS_DOMAIN_ID:-99}"
 
 echo "using: ${COMPOSE}  (isolated project; host port ${NOVNC_PORT})"
 KEEP=0
@@ -114,6 +120,8 @@ else
     bad 'desktop programs are not running as ros'
 fi
 check 'ROS_DISTRO is set'       in_desktop '[ -n "$ROS_DISTRO" ]'
+check 'the self-test runs in its own ROS domain, not the student default' \
+    in_desktop "[ \"\$ROS_DOMAIN_ID\" = \"${ROS_DOMAIN_ID}\" ] && [ \"\$ROS_DOMAIN_ID\" != 42 ]"
 check 'ros2 is on PATH'         in_desktop 'command -v ros2'
 check 'rosdep is on PATH'       in_desktop 'command -v rosdep'
 check 'colcon is on PATH'       in_desktop 'command -v colcon'
