@@ -230,6 +230,27 @@ points, and that is much cheaper to discover before a server exists.
 Acceptance for a first cut: a student can produce a report, see exactly what it
 contains, choose not to send it, and still get a usable fix prompt.
 
+## Distribution: where things live
+
+- **The project's home is the GitHub repository.** Its README is the page a
+  student lands on. Per-platform walkthrough videos (macOS, Windows with WSL,
+  Linux) live on YouTube and are linked from a "watch it on your platform"
+  table there. Recording a video means walking through
+  `platform-test-matrix.md` on that machine, so each video also completes a
+  row of the checklist.
+- **A prebuilt image, on GitHub's container registry (`ghcr.io`).** Today every
+  student builds a 3 GB image for about ten minutes before seeing a turtle; a
+  published image makes that a download. GHCR rather than Docker Hub, because
+  Docker Hub throttles anonymous pulls per IP address and a classroom behind
+  one campus NAT shares a single allowance; because this repository's CI can
+  publish there with its built-in token, with no second account or stored
+  secret; and because students then never touch Docker Hub at all.
+  The image must be published for amd64 **and** arm64, or Apple Silicon
+  students get emulation and a crawling desktop. `make image` would then pull
+  by default and build only on request. Sequenced after the Python port.
+- **A friendlier front door (GitHub Pages)** only if the README becomes too
+  dense for a first-time student.
+
 ## Language: Python replaces shell
 
 **Decided 2026-09-18.** Tooling moves from shell to Python, not Go.
