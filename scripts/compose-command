@@ -1,64 +1,162 @@
-#!/bin/sh
-# Print the compose command to use on this host, or exit non-zero if there is
-# none.  Docker is preferred when both are present, because it is what the
-# documentation and CI use; Podman is a first-class fallback.
-#
-#   $(scripts/compose-command)            -> e.g. "docker compose"
-#   scripts/compose-command --engine      -> e.g. "docker"
-#   scripts/compose-command --make        -> "docker docker compose" (engine, then command)
-#   scripts/compose-command --explain     -> human-readable detection result
-set -eu
+#!/usr/bin/env python3
+"""Print the compose command to use on this host, or exit non-zero if there is
+none.  Docker is preferred when both are present, because it is what the
+documentation and CI use; Podman is a first-class fallback.
 
-mode="${1:-command}"
+  $(scripts/compose-command)            -> e.g. "docker compose"
+  scripts/compose-command --engine      -> e.g. "docker"
+  scripts/compose-command --make        -> "docker docker compose" (engine, then command)
+  scripts/compose-command --explain     -> human-readable detection result
 
-engine=''
-compose=''
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
 
-# `docker compose version` also fails when the CLI exists but no daemon is
-# reachable, which is exactly the Docker Desktop "WSL integration off" case.
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    engine='docker'
-    compose='docker compose'
-elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
-    engine='podman'
-    compose='podman compose'
-elif command -v podman-compose >/dev/null 2>&1 && podman-compose --version >/dev/null 2>&1; then
-    engine='podman'
-    compose='podman-compose'
-elif command -v docker-compose >/dev/null 2>&1 && docker-compose --version >/dev/null 2>&1; then
-    engine='docker'
-    compose='docker-compose'
-fi
+import shutil
+import signal
+import subprocess
+import sys
+from enum import Enum
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
-if [ -z "${compose}" ]; then
-    case "${mode}" in
-        --explain)
-            echo 'No working container engine found.'
-            echo
-            if command -v docker >/dev/null 2>&1; then
-                echo '  docker: the CLI exists but no daemon answered.'
-                echo '          On Windows/WSL, enable Docker Desktop >'
-                echo '          Settings > Resources > WSL Integration for this distro.'
-            else
-                echo '  docker: not installed.'
-            fi
-            if command -v podman >/dev/null 2>&1; then
-                echo '  podman: installed, but neither "podman compose" nor'
-                echo '          podman-compose is available. Install podman-compose.'
-            else
-                echo '  podman: not installed.'
-            fi
-            ;;
-        *)
-            echo 'no working docker or podman compose found; run: scripts/compose-command --explain' >&2
-            ;;
-    esac
-    exit 1
-fi
 
-case "${mode}" in
-    --engine)  echo "${engine}" ;;
-    --make)    echo "${engine} ${compose}" ;;
-    --explain) echo "using ${compose} (engine: ${engine})" ;;
-    *)         echo "${compose}" ;;
-esac
+class Engine(Enum):
+    """The two container engines this project supports, and nothing else."""
+
+    DOCKER = "docker"
+    PODMAN = "podman"
+
+
+class Mode(Enum):
+    """The four output modes.  The set is closed; `command` is the default."""
+
+    COMMAND = "command"
+    ENGINE = "--engine"
+    MAKE = "--make"
+    EXPLAIN = "--explain"
+
+
+class Candidate(NamedTuple):
+    """One way of running compose: how to invoke it, and how to prove it works."""
+
+    engine: Engine
+    command: Tuple[str, ...]
+    probe: Tuple[str, ...]
+
+    @property
+    def text(self) -> str:
+        return " ".join(self.command)
+
+
+# Search order.  `docker compose version` also fails when the CLI exists but no
+# daemon is reachable, which is exactly the Docker Desktop "WSL integration off"
+# case, so a failing probe takes the whole candidate out of the running.
+CANDIDATES = (
+    Candidate(Engine.DOCKER, ("docker", "compose"), ("docker", "compose", "version")),
+    Candidate(Engine.PODMAN, ("podman", "compose"), ("podman", "compose", "version")),
+    Candidate(Engine.PODMAN, ("podman-compose",), ("podman-compose", "--version")),
+    Candidate(Engine.DOCKER, ("docker-compose",), ("docker-compose", "--version")),
+)
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def parse_mode(argv: Sequence[str]) -> Mode:
+    """The mode named by the first argument.
+
+    Anything unrecognised is the default mode: the Makefile and the docs call
+    this script bare, and an unknown word has always fallen through to it.
+    """
+    if not argv:
+        return Mode.COMMAND
+    for mode in (Mode.ENGINE, Mode.MAKE, Mode.EXPLAIN):
+        if argv[0] == mode.value:
+            return mode
+    return Mode.COMMAND
+
+
+def render(mode: Mode, found: Candidate) -> str:
+    """The one line printed once a working compose command has been found."""
+    if mode is Mode.ENGINE:
+        return found.engine.value
+    if mode is Mode.MAKE:
+        return "{} {}".format(found.engine.value, found.text)
+    if mode is Mode.EXPLAIN:
+        return "using {} (engine: {})".format(found.text, found.engine.value)
+    return found.text
+
+
+def explain_nothing_found(docker_installed: bool, podman_installed: bool) -> List[str]:
+    """The lines `--explain` prints when no engine works, given what is installed."""
+    lines = ["No working container engine found.", ""]
+    if docker_installed:
+        lines.extend([
+            "  docker: the CLI exists but no daemon answered.",
+            "          On Windows/WSL, enable Docker Desktop >",
+            "          Settings > Resources > WSL Integration for this distro.",
+        ])
+    else:
+        lines.append("  docker: not installed.")
+    if podman_installed:
+        lines.extend([
+            '  podman: installed, but neither "podman compose" nor',
+            "          podman-compose is available. Install podman-compose.",
+        ])
+    else:
+        lines.append("  podman: not installed.")
+    return lines
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def installed(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def probe_succeeds(argv: Sequence[str]) -> bool:
+    """True when the command runs and exits zero; its output is discarded."""
+    try:
+        completed = subprocess.run(
+            list(argv),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return completed.returncode == 0
+
+
+def detect() -> Optional[Candidate]:
+    """The first candidate whose binary exists and whose probe exits zero."""
+    for candidate in CANDIDATES:
+        if installed(candidate.command[0]) and probe_succeeds(candidate.probe):
+            return candidate
+    return None
+
+
+def main(argv: Sequence[str]) -> int:
+    mode = parse_mode(argv)
+    found = detect()
+    if found is None:
+        if mode is Mode.EXPLAIN:
+            for line in explain_nothing_found(installed("docker"), installed("podman")):
+                print(line)
+        else:
+            print(
+                "no working docker or podman compose found; "
+                "run: scripts/compose-command --explain",
+                file=sys.stderr,
+            )
+        return 1
+    print(render(mode, found))
+    return 0
+
+
+if __name__ == "__main__":
+    # Die on a closed pipe the way the shell did (`... | head -1`), rather than
+    # raising BrokenPipeError out of a print().
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main(sys.argv[1:]))

@@ -134,6 +134,66 @@ class ComposeUpTests(ScriptTestCase):
             ps_calls[0],
         )
 
+    # --- which compose project's desktop it looks for ----------------------
+    #
+    # Filtering on a hardcoded project finds nothing under any project
+    # override, so the stale-image check silently stops working -- which is the
+    # one failure this script exists to prevent.  The project is therefore read
+    # from COMPOSE, then COMPOSE_PROJECT_NAME, then compose.yaml's `name:`.
+
+    def project_filter(self):
+        """The project label the single `ps` call filtered on."""
+        ps_calls = [c for c in self.sandbox.argv("podman") if c and c[0] == "ps"]
+        self.assertEqual(1, len(ps_calls), self.sandbox.argv("podman"))
+        labels = [w for w in ps_calls[0] if w.startswith("label=com.docker.compose.project=")]
+        self.assertEqual(1, len(labels), ps_calls[0])
+        return labels[0].split("=", 2)[2]
+
+    def run_with(self, compose, **env):
+        self.engine(image_id="sameid", container=CONTAINER, running_id="sameid")
+        self.sandbox.fake(compose.split()[0], stdout="compose ran\n")
+        run = self.run_script(COMPOSE=compose, ENGINE="podman", **env)
+        self.assertStatus(run, 0)
+        return run
+
+    def test_a_short_project_flag_in_compose_names_the_project(self):
+        self.run_with("compose-stub -p other")
+        self.assertEqual("other", self.project_filter())
+
+    def test_a_short_project_flag_with_an_equals_names_the_project(self):
+        self.run_with("compose-stub -p=other")
+        self.assertEqual("other", self.project_filter())
+
+    def test_a_long_project_flag_in_compose_names_the_project(self):
+        self.run_with("compose-stub --project-name other")
+        self.assertEqual("other", self.project_filter())
+
+    def test_a_long_project_flag_with_an_equals_names_the_project(self):
+        self.run_with("compose-stub --project-name=other")
+        self.assertEqual("other", self.project_filter())
+
+    def test_compose_project_name_names_the_project(self):
+        self.run_with("compose-stub", COMPOSE_PROJECT_NAME="from-the-environment")
+        self.assertEqual("from-the-environment", self.project_filter())
+
+    def test_a_project_flag_beats_the_environment_variable(self):
+        self.run_with("compose-stub -p from-the-flag",
+                      COMPOSE_PROJECT_NAME="from-the-environment")
+        self.assertEqual("from-the-flag", self.project_filter())
+
+    def test_a_stale_image_is_detected_under_a_project_override(self):
+        self.engine(image_id="newid", container=CONTAINER, running_id="oldid")
+        self.compose()
+        run = self.run_script(COMPOSE="compose-stub -p other", ENGINE="podman")
+        self.assertStatus(run, 0)
+        self.assertEqual("other", self.project_filter())
+        self.assertHas(run, REBUILT)
+        self.assertHas(run, "+ compose-stub -p other up -d --force-recreate")
+        self.assertEqual(
+            [["-p", "other", "up", "-d", "--force-recreate"]],
+            self.sandbox.argv("compose-stub"),
+        )
+
     def test_the_image_name_and_distro_can_be_overridden(self):
         self.sandbox.fake(
             "podman",

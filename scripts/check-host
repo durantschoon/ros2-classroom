@@ -1,63 +1,243 @@
-#!/bin/sh
-# Report whether this host can build and run the workstation, and print the
-# exact command to fix anything missing.  Changes nothing.
-#
-# Requirements that are NOT checked here live inside the image; see
-# docs/host-requirements.md for why the list is this short.
-set -eu
+#!/usr/bin/env python3
+"""Report whether this host can build and run the workstation, and print the
+exact command to fix anything missing.  Changes nothing.
 
-cd "$(dirname "$0")/.."
+Requirements that are NOT checked here live inside the image; see
+docs/host-requirements.md for why the list is this short.
 
-status=0
-ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; }
-bad()  { printf '  \033[31mmiss\033[0m  %s\n' "$1"; status=1; }
-fix()  { printf '        -> %s\n' "$1"; }
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
 
-echo 'Container engine'
-if compose="$(./scripts/compose-command 2>/dev/null)"; then
-    ok "compose: ${compose}"
-    engine="$(./scripts/compose-command --engine)"
+import os
+import signal
+import subprocess
+import sys
+from enum import Enum
+from pathlib import Path
+from typing import List, Optional, Sequence, Tuple
 
-    version="$("${engine}" version --format '{{.Client.Version}}' 2>/dev/null \
-        || "${engine}" --version 2>/dev/null | head -1)"
-    ok "engine:  ${engine} ${version}"
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+COMPOSE_COMMAND = HERE / "compose-command"
+MEMINFO = Path("/proc/meminfo")
 
-    if [ "${engine}" = 'podman' ]; then
-        major="$(printf '%s' "${version}" | tr -cd '0-9.\n' | cut -d. -f1)"
-        if [ -n "${major}" ] && [ "${major}" -lt 4 ] 2>/dev/null; then
-            warn "podman ${version} predates \`podman compose\`; using podman-compose"
-            fix 'pip install --user -r requirements-host.txt   (already satisfied)'
-        fi
-        if "${engine}" info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qi true; then
-            ok 'podman is running rootless'
-        else
-            warn 'podman is running as root; rootless is recommended'
-        fi
-    fi
-else
-    bad 'no working docker or podman compose'
-    ./scripts/compose-command --explain | sed 's/^/        /'
-    fix 'see docs/host-requirements.md'
-fi
+DISK_GB_WANTED = 15
+MEMORY_GB_WANTED = 4
 
-echo
-echo 'Resources'
-if disk_kb="$(df -Pk . 2>/dev/null | awk 'NR==2 {print $4}')"; then
-    disk_gb=$((disk_kb / 1024 / 1024))
-    if [ "${disk_gb}" -ge 15 ]; then ok "disk free: ${disk_gb} GB"
-    else warn "disk free: ${disk_gb} GB (15 GB recommended)"; fi
-fi
-if mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null)"; then
-    mem_gb=$((mem_kb / 1024 / 1024))
-    if [ "${mem_gb}" -ge 4 ]; then ok "memory: ${mem_gb} GB"
-    else warn "memory: ${mem_gb} GB (4 GB recommended)"; fi
-fi
+# Printed unconditionally, as they always have been: this is read by a student
+# in a terminal, and `make doctor` has never varied on whether stdout is a tty.
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
 
-echo
-if [ "${status}" -eq 0 ]; then
-    echo 'Ready: run `make image`, then `make up`.'
-else
-    echo 'Not ready; see docs/host-requirements.md.'
-fi
-exit "${status}"
+
+class Engine(Enum):
+    """The two container engines this project supports, and nothing else."""
+
+    DOCKER = "docker"
+    PODMAN = "podman"
+
+    @classmethod
+    def parse(cls, text: str) -> Optional["Engine"]:
+        for member in cls:
+            if member.value == text:
+                return member
+        return None
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def ok(text: str) -> str:
+    return "  {}ok{}    {}".format(GREEN, RESET, text)
+
+
+def warn(text: str) -> str:
+    return "  {}warn{}  {}".format(YELLOW, RESET, text)
+
+
+def miss(text: str) -> str:
+    return "  {}miss{}  {}".format(RED, RESET, text)
+
+
+def fix(text: str) -> str:
+    return "        -> {}".format(text)
+
+
+def quoted(text: str) -> List[str]:
+    """Another command's output, indented under the line that introduced it."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return ["        " + line for line in lines]
+
+
+def major_version(version: str) -> Optional[int]:
+    """The leading integer of a version string, or None when there is not one.
+
+    Mirrors `tr -cd '0-9.\\n' | cut -d. -f1`: everything but digits and dots is
+    dropped first, so "podman version 3.4.4" and "3.4.4" answer alike.
+    """
+    kept = "".join(ch for ch in version if ch.isdigit() or ch == ".")
+    head = kept.split(".", 1)[0]
+    try:
+        return int(head)
+    except ValueError:
+        return None
+
+
+def says_rootless(info: str) -> bool:
+    """What `grep -qi true` made of `podman info`'s Rootless field."""
+    return "true" in info.lower()
+
+
+def parse_df_available_kb(text: str) -> Optional[int]:
+    """The Available column of `df -Pk`: line 2, field 4."""
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return None
+    fields = lines[1].split()
+    if len(fields) < 4:
+        return None
+    try:
+        return int(fields[3])
+    except ValueError:
+        return None
+
+
+def parse_meminfo_kb(text: str) -> Optional[int]:
+    """MemTotal, in kB, from /proc/meminfo."""
+    for line in text.split("\n"):
+        if "MemTotal" in line:
+            fields = line.split()
+            if len(fields) >= 2:
+                try:
+                    return int(fields[1])
+                except ValueError:
+                    return None
+    return None
+
+
+def gigabytes(kilobytes: int) -> int:
+    return kilobytes // 1024 // 1024
+
+
+def resource_line(label: str, gb: int, wanted: int) -> str:
+    if gb >= wanted:
+        return ok("{}: {} GB".format(label, gb))
+    return warn("{}: {} GB ({} GB recommended)".format(label, gb, wanted))
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def run_for_output(argv: Sequence[str], keep_stderr: bool = False) -> Tuple[int, str]:
+    """A command's exit status and its stdout.  Not being runnable is a failure."""
+    try:
+        completed = subprocess.run(
+            list(argv),
+            stdout=subprocess.PIPE,
+            stderr=None if keep_stderr else subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return 127, ""
+    return completed.returncode, completed.stdout.decode("utf-8", errors="replace")
+
+
+def capture(argv: Sequence[str], keep_stderr: bool = False) -> Optional[str]:
+    """The command's stdout, or None when it could not be run or failed."""
+    status, out = run_for_output(argv, keep_stderr=keep_stderr)
+    return None if status != 0 else out
+
+
+def stripped(text: Optional[str]) -> str:
+    """A command substitution's value: the output without its trailing newlines."""
+    return "" if text is None else text.rstrip("\n")
+
+
+def engine_version(name: str) -> str:
+    """The engine's version, preferring the machine-readable form."""
+    formatted = capture([name, "version", "--format", "{{.Client.Version}}"])
+    if formatted is not None:
+        return stripped(formatted)
+    fallback = stripped(capture([name, "--version"]))
+    return fallback.split("\n", 1)[0]
+
+
+def report_engine(out: List[str]) -> int:
+    """The 'Container engine' section.  Returns 0 when an engine was found."""
+    compose = capture([str(COMPOSE_COMMAND)])
+    if compose is None:
+        out.append(miss("no working docker or podman compose"))
+        # --explain exits non-zero here by design; it is its output that matters.
+        _, explanation = run_for_output([str(COMPOSE_COMMAND), "--explain"], keep_stderr=True)
+        out.extend(quoted(explanation))
+        out.append(fix("see docs/host-requirements.md"))
+        return 1
+
+    out.append(ok("compose: {}".format(stripped(compose))))
+    name = stripped(capture([str(COMPOSE_COMMAND), "--engine"]))
+    version = engine_version(name)
+    out.append(ok("engine:  {} {}".format(name, version)))
+
+    if Engine.parse(name) is Engine.PODMAN:
+        major = major_version(version)
+        if major is not None and major < 4:
+            out.append(warn(
+                "podman {} predates `podman compose`; using podman-compose".format(version)
+            ))
+            out.append(fix("pip install --user -r requirements-host.txt   (already satisfied)"))
+        info = capture([name, "info", "--format", "{{.Host.Security.Rootless}}"])
+        if info is not None and says_rootless(info):
+            out.append(ok("podman is running rootless"))
+        else:
+            out.append(warn("podman is running as root; rootless is recommended"))
+    return 0
+
+
+def report_resources(out: List[str]) -> None:
+    """The 'Resources' section.  A measurement that cannot be taken is left out."""
+    disk = capture(["df", "-Pk", "."])
+    if disk is not None:
+        disk_kb = parse_df_available_kb(disk)
+        if disk_kb is not None:
+            out.append(resource_line("disk free", gigabytes(disk_kb), DISK_GB_WANTED))
+    try:
+        meminfo = MEMINFO.read_text(errors="replace")
+    except OSError:
+        meminfo = ""
+    mem_kb = parse_meminfo_kb(meminfo)
+    if mem_kb is not None:
+        out.append(resource_line("memory", gigabytes(mem_kb), MEMORY_GB_WANTED))
+
+
+def main() -> int:
+    # The disk check measures the filesystem the repository is on, so the
+    # working directory matters, exactly as it did in the shell.
+    os.chdir(str(REPO))
+
+    out = []  # type: List[str]
+    out.append("Container engine")
+    status = report_engine(out)
+
+    out.append("")
+    out.append("Resources")
+    report_resources(out)
+
+    out.append("")
+    if status == 0:
+        out.append("Ready: run `make image`, then `make up`.")
+    else:
+        out.append("Not ready; see docs/host-requirements.md.")
+
+    for line in out:
+        print(line)
+    return status
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main())

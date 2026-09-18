@@ -1,56 +1,130 @@
-#!/bin/sh
-# Open a URL in the user's real browser, or print it if that cannot be done.
-#
-# The URL is always printed: opening a browser is a convenience, and every
-# failure mode here should still leave the user able to copy the address.
-#
-# WSL is handled before xdg-open on purpose.  Under WSL, xdg-open consults the
-# Linux mime database, which commonly names a browser that is not installed
-# (firefox.desktop on a bare Ubuntu image) and then falls through to a text
-# editor -- so the page "opens" in an editor instead of a browser.
-set -eu
+#!/usr/bin/env python3
+"""Open a URL in the user's real browser, or print it if that cannot be done.
 
-url="${1:?usage: open-url URL}"
+The URL is always printed, and flushed, before anything is launched: opening a
+browser is a convenience, and every failure mode here should still leave the
+user able to copy the address.
 
-printf '%s\n' "${url}"
+WSL is handled before xdg-open on purpose.  Under WSL, xdg-open consults the
+Linux mime database, which commonly names a browser that is not installed
+(firefox.desktop on a bare Ubuntu image) and then falls through to a text
+editor -- so the page "opens" in an editor instead of a browser.
 
-is_wsl() {
-    [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
-    [ -r /proc/version ] && grep -qi microsoft /proc/version && return 0
-    return 1
-}
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
 
-if [ -n "${BROWSER:-}" ] && command -v "${BROWSER}" >/dev/null 2>&1; then
-    exec "${BROWSER}" "${url}"
-fi
+import os
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Optional, Sequence
 
-if is_wsl; then
+PROC_VERSION = Path("/proc/version")
+
+USAGE = "usage: open-url URL"
+NO_WINDOWS_BROWSER = "Could not reach a Windows browser; open the address above yourself."
+NO_OPENER = "No browser opener found; open the address above yourself."
+
+# What a POSIX shell reports for a failed `exec`, and for a usage error.
+EXIT_NOT_RUN = 127
+EXIT_USAGE = 2
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def looks_like_wsl(distro_name: str, proc_version: Optional[str]) -> bool:
+    """WSL, judged the way the shell judged it: the env var, else /proc/version."""
+    if distro_name:
+        return True
+    return proc_version is not None and "microsoft" in proc_version.lower()
+
+
+def powershell_argv(url: str) -> List[str]:
+    return ["powershell.exe", "-NoProfile", "-Command", "Start-Process '{}'".format(url)]
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def read_proc_version() -> Optional[str]:
+    try:
+        return PROC_VERSION.read_text(errors="replace")
+    except OSError:
+        return None
+
+
+def uname_s() -> str:
+    """`uname -s`, as a subprocess, so the answer is the system's and not ours."""
+    try:
+        completed = subprocess.run(
+            ["uname", "-s"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return ""
+    return completed.stdout.decode("utf-8", errors="replace").strip()
+
+
+def replace_with(argv: Sequence[str]) -> int:
+    """Become the opener, so its exit status is this script's.  Only returns on failure."""
+    try:
+        os.execvp(argv[0], list(argv))
+    except OSError as err:
+        print("open-url: {}: {}".format(argv[0], err.strerror), file=sys.stderr)
+    return EXIT_NOT_RUN
+
+
+def open_on_wsl(url: str) -> int:
     # wslu's wslview is the tidiest route when it is installed.
-    if command -v wslview >/dev/null 2>&1; then
-        exec wslview "${url}"
-    fi
-    if command -v powershell.exe >/dev/null 2>&1; then
-        exec powershell.exe -NoProfile -Command "Start-Process '${url}'"
-    fi
-    if command -v explorer.exe >/dev/null 2>&1; then
-        # explorer.exe exits non-zero even when it succeeds.
-        explorer.exe "${url}" || true
-        exit 0
-    fi
-    echo 'Could not reach a Windows browser; open the address above yourself.' >&2
-    exit 0
-fi
+    if shutil.which("wslview"):
+        return replace_with(["wslview", url])
+    if shutil.which("powershell.exe"):
+        return replace_with(powershell_argv(url))
+    if shutil.which("explorer.exe"):
+        # explorer.exe exits non-zero even when it succeeds, so its status is
+        # deliberately dropped rather than reported as a failure.
+        try:
+            subprocess.run(["explorer.exe", url], stdin=subprocess.DEVNULL, check=False)
+        except OSError:
+            pass
+        return 0
+    print(NO_WINDOWS_BROWSER, file=sys.stderr)
+    return 0
 
-case "$(uname -s)" in
-    Darwin)
-        command -v open >/dev/null 2>&1 && exec open "${url}"
-        ;;
-    *)
-        if command -v xdg-open >/dev/null 2>&1; then
-            exec xdg-open "${url}"
-        fi
-        ;;
-esac
 
-echo 'No browser opener found; open the address above yourself.' >&2
-exit 0
+def open_elsewhere(url: str) -> int:
+    if uname_s() == "Darwin":
+        if shutil.which("open"):
+            return replace_with(["open", url])
+    elif shutil.which("xdg-open"):
+        return replace_with(["xdg-open", url])
+    print(NO_OPENER, file=sys.stderr)
+    return 0
+
+
+def main(argv: Sequence[str]) -> int:
+    if not argv:
+        print(USAGE, file=sys.stderr)
+        return EXIT_USAGE
+    url = argv[0]
+
+    print(url, flush=True)
+
+    browser = os.environ.get("BROWSER", "")
+    if browser and shutil.which(browser):
+        return replace_with([browser, url])
+
+    if looks_like_wsl(os.environ.get("WSL_DISTRO_NAME", ""), read_proc_version()):
+        return open_on_wsl(url)
+    return open_elsewhere(url)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main(sys.argv[1:]))

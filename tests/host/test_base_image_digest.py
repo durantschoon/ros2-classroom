@@ -110,12 +110,27 @@ class BaseImageDigestTests(ScriptTestCase):
         )
         self.assertEqual(DIGEST + "\n", self.run_script().stdout)
 
-    def test_an_all_uppercase_header_is_not_matched_today(self):
-        """Pins current behaviour: the match varies only the first letter of each word."""
+    def test_an_all_uppercase_header_is_matched(self):
+        """HTTP header names are case-insensitive, so the match is too."""
         self.curl(header_block=headers("DOCKER-CONTENT-DIGEST: " + DIGEST))
         run = self.run_script()
-        self.assertNotEqual(0, run.status, run.report())
-        self.assertHas(run, "no digest for ros:lyrical-ros-base", where="stderr")
+        self.assertStatus(run, 0)
+        self.assertEqual(DIGEST + "\n", run.stdout)
+
+    def test_a_mixed_case_header_is_matched(self):
+        """Mixed case, including a spelling the old pattern missed.
+
+        The old [Dd]ocker-[Cc]ontent-[Dd]igest varied only the FIRST letter of
+        each word, so Docker-content-Digest happened to match while
+        Docker-Content-DIGEST did not.  Both must match now.
+        """
+        for spelling in ("Docker-content-Digest", "Docker-Content-DIGEST"):
+            with self.subTest(header=spelling):
+                self.setUp()
+                self.curl(header_block=headers(spelling + ": " + DIGEST))
+                run = self.run_script()
+                self.assertStatus(run, 0)
+                self.assertEqual(DIGEST + "\n", run.stdout)
 
     # --- failures ----------------------------------------------------------
 
