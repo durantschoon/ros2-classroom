@@ -23,6 +23,9 @@ jobs:
           python --version
           python scripts/lint-scripts
 
+      - name: Black-box tests for the host scripts
+        run: python -m unittest discover -s tests/host -v
+
       - name: Validate the compose configuration
         run: docker compose config --quiet
 

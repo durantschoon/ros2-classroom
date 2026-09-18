@@ -80,6 +80,7 @@ docker compose up -d
 | `make build [PKG=name]` | `colcon build` your packages |
 | `make run PKG=name NODE=exe` | `ros2 run` a node in the foreground |
 | `make test [PKG=name]` | Run your packages' tests and report the real verdict |
+| `make check` | Fast tests for the host scripts (seconds, no containers) |
 | `make lint` | Validate compose.yaml and lint every script (shellcheck, Python 3.9) |
 | `make digest` | Print the base-image digest to pin in `.env` |
 | `make engine` | Show which container engine was detected |

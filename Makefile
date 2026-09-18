@@ -40,7 +40,7 @@ PKG_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(
 
 .PHONY: help engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
-	package build run test logs ps down reset selftest lint digest
+	package build run test logs ps down reset selftest check lint digest
 
 help:
 	@echo 'ROS 2 tutorial workstation'
@@ -79,6 +79,7 @@ help:
 	@echo '  make selftest    Check the workstation itself (~10 min; never touches your work)'
 	@echo
 	@echo 'Working on this project'
+	@echo '  make check       Fast tests for the host scripts (seconds, no containers)'
 	@echo '  make lint        Validate compose.yaml and lint every script (shellcheck, Python 3.9)'
 	@echo '  make digest      Print the base-image digest to pin'
 	@echo '  make reset       Delete containers AND volumes -- destructive, asks first'
@@ -260,6 +261,12 @@ reset: require-engine
 # volumes -- safe to run while a student's desktop is up, with work in it.
 selftest:
 	./scripts/smoke-container
+
+# Black-box tests for the host scripts: each one runs as a subprocess against
+# fake executables on a throwaway PATH.  No engine, no containers, no network,
+# so this deliberately does NOT depend on require-engine.
+check:
+	python3 -m unittest discover -s tests/host
 
 lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
