@@ -36,6 +36,10 @@ status, disk and RAM, and names the fix for anything missing.
 - [ ] Desktop renders: Openbox background, a terminal already open
 - [ ] Right-click → turtlesim_node — window appears
 - [ ] Right-click → turtle_teleop_key, click it, **arrow keys move the turtle**
+- [ ] **Reconnect**: close and reopen the tab (or sleep the machine) — the page
+      reconnects by itself and turtlesim is still running
+- [ ] **Clipboard**: paste a command into the desktop terminal via the side
+      panel's Clipboard button, and run it
 - [ ] `install-ros-packages demo-nodes-cpp` succeeds in the desktop terminal
 - [ ] `tutorial clone https://github.com/ros/ros_tutorials.git && tutorial deps && tutorial build`
 - [ ] `make down && make up` — `/workspace/src` still has the clone
@@ -65,6 +69,10 @@ Podman inside WSL.
 - [ ] Desktop renders in the Windows browser at `localhost:6080`
 - [ ] turtlesim window appears
 - [ ] **Arrow keys move the turtle**
+- [ ] **Reconnect**: close and reopen the tab (or sleep the machine) — the page
+      reconnects by itself and turtlesim is still running
+- [ ] **Clipboard**: paste a command into the desktop terminal via the side
+      panel's Clipboard button, and run it
 - [ ] `install-ros-packages demo-nodes-cpp` succeeds
 - [ ] `tutorial clone ... && tutorial deps && tutorial build`
 - [ ] Persistence across `make down && make up`
@@ -77,7 +85,7 @@ Make is usually absent; use the documented plain commands.
 
 - [ ] `docker compose build`
 - [ ] `docker compose up -d`
-- [ ] Browse to `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`
+- [ ] Browse to `http://localhost:6080/vnc.html?autoconnect=1&resize=remote&reconnect=true`
 - [ ] Desktop renders; turtlesim and turtle_teleop_key work from the right-click menu
 - [ ] `docker compose down`
 
@@ -96,6 +104,10 @@ Windows shim and fails.
 - [ ] `make up` then `make open` — `xdg-open` path, needs a real browser installed
 - [ ] Desktop renders
 - [ ] turtlesim appears; **arrow keys move the turtle**
+- [ ] **Reconnect**: close and reopen the tab (or sleep the machine) — the page
+      reconnects by itself and turtlesim is still running
+- [ ] **Clipboard**: paste a command into the desktop terminal via the side
+      panel's Clipboard button, and run it
 - [ ] `install-ros-packages demo-nodes-cpp`
 - [ ] `tutorial clone ... && tutorial deps && tutorial build`
 - [ ] Persistence across `make down && make up`

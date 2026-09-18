@@ -7,7 +7,7 @@ socket forwarding on Linux. The same three commands work everywhere:
 ```sh
 docker compose build
 docker compose up -d
-# open http://localhost:6080/vnc.html?autoconnect=1&resize=remote
+# open http://localhost:6080/vnc.html?autoconnect=1&resize=remote&reconnect=true
 ```
 
 `make image`, `make up`, and `make open` are the same commands with less typing.
@@ -100,7 +100,7 @@ software-rendered desktop becomes noticeably slow.
 
 ## Using the desktop
 
-Open `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`.
+Open `http://localhost:6080/vnc.html?autoconnect=1&resize=remote&reconnect=true`.
 
 - A terminal opens automatically at startup, already sourced for ROS. It is
   *inside* the workstation: use it for `ros2`, `colcon`, and `pkg`. Every
@@ -116,6 +116,23 @@ Open `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`.
 
 `resize=remote` makes the container's virtual screen follow the browser window.
 Set `SCREEN_GEOMETRY` in `.env` to change the startup resolution.
+
+**The page can disconnect, and that is fine.** After laptop sleep, a network
+blip, or a closed tab, the page shows "Disconnected". Nothing inside the desktop
+stops — turtlesim, your terminals, and running nodes carry on — and
+`reconnect=true` in the URL makes it reconnect by itself within a few seconds.
+Reloading the page, or running `make open` again, works too.
+
+**The side panel.** A small tab on the left edge of the page opens noVNC's
+control panel:
+
+| Button | Use it for |
+|---|---|
+| Clipboard | Pasting text *into* the desktop. The browser's own paste does not reach it, so this is how a command printed in your host terminal gets into the desktop terminal. Text copied inside the desktop appears here too. |
+| Extra keys | Ctrl, Alt, Tab, Esc, and Ctrl+Alt+Del — keys your browser or OS would otherwise intercept. |
+| Fullscreen | More room for RViz and rqt. |
+| Settings | Scaling and quality, if the desktop looks blurry or cramped. |
+| Disconnect | Leaves everything running; reconnect any time. |
 
 ## Security model
 
@@ -174,6 +191,14 @@ you see it from a raw `podman-compose` command, it is a Podman 3.x false alarm:
 one optional plugin is skipped while the plugins that carry traffic load
 normally. [host-requirements.md](host-requirements.md) explains it, and
 `VERBOSE=1 make up` shows the unfiltered output.
+
+**The page says "Disconnected".** Expected after sleep or a network blip; it
+reconnects on its own, and nothing in the desktop was lost. If it does not come
+back within half a minute, check the desktop is still up with `make ps`.
+
+**Pasting into the desktop does nothing.** Use the Clipboard button in the
+side panel (the tab on the page's left edge): paste your text there, then paste
+inside the desktop as usual.
 
 **The browser shows "failed to connect".** The desktop takes a few seconds to
 start. Check `docker compose ps` for the health status and `make logs` for

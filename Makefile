@@ -21,6 +21,10 @@ SERVICE ?= desktop
 ROS_DISTRO ?= lyrical
 NOVNC_PORT ?= 6080
 URL := http://localhost:$(NOVNC_PORT)
+# reconnect=true: noVNC drops the connection after laptop sleep or a network
+# blip.  Nothing in the desktop stops when that happens, so reconnect on our own
+# rather than leaving a student staring at "Disconnected".
+DESKTOP_URL := $(URL)/vnc.html?autoconnect=1&resize=remote&reconnect=true
 
 # Run a command in the running desktop container as the workstation user, with
 # a login shell so the ROS environment is sourced exactly as documented.
@@ -128,7 +132,7 @@ open:
 	    done; \
 	    [ "$$i" -gt 0 ] && echo; \
 	fi; true
-	@./scripts/open-url '$(URL)/vnc.html?autoconnect=1&resize=remote'
+	@./scripts/open-url '$(DESKTOP_URL)'
 	@echo
 	@echo 'Two terminals, two jobs:'
 	@echo '  - THIS terminal, on your computer: every make command.'
@@ -141,6 +145,15 @@ open:
 	@echo '    turtle_teleop_key, rqt, RViz.'
 	@echo '  - To drive the turtle, click the teleop window first, then use'
 	@echo '    the arrow keys. Keys go to whichever window has focus.'
+	@echo
+	@echo 'About the browser page:'
+	@echo '  - It may say "Disconnected" after sleep or a network blip. That is'
+	@echo '    normal: it reconnects by itself within a few seconds, and'
+	@echo '    everything in the desktop keeps running. Reloading works too.'
+	@echo '  - The small tab on the left edge of the page opens a panel.'
+	@echo '    Clipboard pastes text INTO the desktop, e.g. a command printed'
+	@echo '    in this terminal. Extra keys sends Ctrl, Alt, Tab and Esc, which'
+	@echo '    your browser would otherwise keep for itself.'
 
 # A one-off container, so it works whether or not the desktop is running.
 shell: require-engine

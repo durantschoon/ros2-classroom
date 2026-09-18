@@ -29,6 +29,11 @@ computer — the one where you typed `make up`. The terminal that opens *inside*
 the browser desktop is for ROS commands (`ros2`, `colcon`, `pkg`); `make`
 targets don't work in there, and it will tell you so if you try.
 
+**If the page says "Disconnected"**, that's normal after sleep or a network
+blip — it reconnects by itself and nothing in the desktop stops. The small tab
+on the page's left edge opens a panel whose **Clipboard** button pastes text
+into the desktop.
+
 Once turtlesim runs, move on to your own code:
 
 ```sh
@@ -54,7 +59,7 @@ for `docker compose` if that is what you have):
 ```powershell
 docker compose build
 docker compose up -d
-# browse to http://localhost:6080/vnc.html?autoconnect=1&resize=remote
+# browse to http://localhost:6080/vnc.html?autoconnect=1&resize=remote&reconnect=true
 ```
 
 ## Commands
