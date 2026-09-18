@@ -168,22 +168,28 @@ turtlesim: require-engine
 	@echo '  That opens a white window titled "turtlesim teleop (arrow keys)".'
 	@echo '  1. Click inside that white window first. Keys only reach the'
 	@echo '     window that has focus.'
-	@echo '  2. Then press the arrow keys. Try those before the letter keys:'
-	@echo '     arrows drive and turn, letters snap to fixed headings.'
+	@echo '  2. Then press the arrow keys  ← ↑ ↓ →  before trying the letter'
+	@echo '     keys: arrows drive and turn, letters snap to fixed headings.'
 
 # Named for turtlesim on purpose: "teleop" alone reads as generic robot
 # teleoperation, but turtle_teleop_key only ever drives turtlesim.  The colours
 # are pinned because the instructions tell students to click "the white
 # window"; xterm's default would otherwise depend on which X resources load.
 turtlesim-teleop: require-engine
-	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -bg white -fg black -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc 'ros2 run turtlesim turtle_teleop_key' >/tmp/teleop.log 2>&1 &"
+	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -bg white -fg black -u8 -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc turtlesim-teleop >/tmp/teleop.log 2>&1 &"
 	@echo 'turtlesim teleop opened on the browser desktop.'
 	@echo
 	@echo '  1. Click inside the WHITE window titled "turtlesim teleop (arrow'
 	@echo '     keys)". Keys only reach the window that has focus: typing in'
 	@echo '     the blue turtlesim window, or in this terminal, does nothing.'
-	@echo '  2. Then press the arrow keys: up and down drive, left and right'
-	@echo '     turn. Start there. The lowercase letter keys (g b v c d e r t)'
+	@echo '  2. Then press the arrow keys. Start there:'
+	@echo
+	@echo '                ↑             ↑  drive forward'
+	@echo '            ←   ↓   →         ↓  back up'
+	@echo '                              ←  turn left      →  turn right'
+	@echo
+	@echo '     The same picture is at the top of the white window.'
+	@echo '     The lowercase letter keys (g b v c d e r t)'
 	@echo '     snap the turtle to fixed headings, which makes more sense once'
 	@echo '     you have driven it with the arrows. f cancels a turn; q quits.'
 
