@@ -1,29 +1,78 @@
-#!/bin/bash
-# Create the colcon workspace layout without ever overwriting existing work.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Create the colcon workspace layout without ever overwriting existing work.
 
-WORKSPACE="${WORKSPACE:-/workspace}"
-marker="${WORKSPACE}/.ros-workstation"
+Student work is append-only (docs/stages/README.md, guardrail 7): the marker
+file is written only when it does not already exist, and nothing under the
+workspace is ever removed or rewritten.
+"""
 
-mkdir -p "${WORKSPACE}/src"
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
 
-if [ ! -e "${marker}" ]; then
-    cat > "${marker}" <<MARKER
-# ROS 2 tutorial workstation
-# Created: $(date --iso-8601=seconds)
-# Distribution: ${ROS_DISTRO:-unknown}
-#
-# This directory is a colcon workspace on a persistent volume.  Clone tutorial
-# repositories into src/, then:
-#   rosdep install --from-paths src --ignore-src --rosdistro "\$ROS_DISTRO" -r -y
-#   colcon build --symlink-install
-# New shells source install/setup.bash automatically once it exists.
-MARKER
-    echo "initialized workspace at ${WORKSPACE}"
-else
-    echo "workspace already initialized at ${WORKSPACE} (left untouched)"
-fi
+MARKER_NAME = ".ros-workstation"
+SUBDIRECTORIES = ("build", "install", "log")
 
-for dir in build install log; do
-    [ -d "${WORKSPACE}/${dir}" ] || echo "note: ${WORKSPACE}/${dir} appears after the first colcon build"
-done
+
+def workspace() -> Path:
+    return Path(os.environ.get("WORKSPACE") or "/workspace")
+
+
+def created_stamp() -> str:
+    """The same text as `date --iso-8601=seconds`: local time, second
+    resolution, with a numeric UTC offset."""
+    return datetime.now().astimezone().replace(microsecond=0).isoformat()
+
+
+def marker_text(distro: str, stamp: str) -> str:
+    """Pure: the marker file's contents. No I/O here (guardrail 2)."""
+    return (
+        "# ROS 2 tutorial workstation\n"
+        "# Created: {}\n"
+        "# Distribution: {}\n"
+        "#\n"
+        "# This directory is a colcon workspace on a persistent volume.  Clone"
+        " tutorial\n"
+        "# repositories into src/, then:\n"
+        '#   rosdep install --from-paths src --ignore-src --rosdistro'
+        ' "$ROS_DISTRO" -r -y\n'
+        "#   colcon build --symlink-install\n"
+        "# New shells source install/setup.bash automatically once it exists.\n"
+    ).format(stamp, distro)
+
+
+def main() -> int:
+    ws = workspace()
+    marker = ws / MARKER_NAME
+
+    (ws / "src").mkdir(parents=True, exist_ok=True)
+
+    if not marker.exists():
+        distro = os.environ.get("ROS_DISTRO") or "unknown"
+        # "x" would be the obvious mode, but exists() has already answered the
+        # question and a plain write keeps the failure modes identical to the
+        # shell version's redirect.
+        marker.write_text(marker_text(distro, created_stamp()))
+        print("initialized workspace at {}".format(ws))
+    else:
+        print(
+            "workspace already initialized at {} (left untouched)".format(ws)
+        )
+
+    for name in SUBDIRECTORIES:
+        if not (ws / name).is_dir():
+            print(
+                "note: {} appears after the first colcon build".format(
+                    ws / name
+                )
+            )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except OSError as err:
+        print("init-workspace: {}".format(err), file=sys.stderr)
+        sys.exit(1)
