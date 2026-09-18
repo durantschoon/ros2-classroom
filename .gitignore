@@ -8,3 +8,6 @@
 compose.gpu.yaml
 compose.bind.yaml
 workspace-src/
+
+# Agent worktrees are created inside the repo; never commit them.
+.claude/worktrees/
