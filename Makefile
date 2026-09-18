@@ -38,53 +38,39 @@ DESKTOP_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash 
 # its "next:" hints name make targets instead of pkg subcommands.
 PKG_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(SERVICE) bash -lc
 
-.PHONY: help engine doctor require-engine require-desktop image up open shell turtlesim \
+# --- `make <target> help` and `make <target> examples` ------------------------
+# make has no subcommands: `make shell help` means "run shell, then run help".
+# So when help or examples is named alongside another goal, no real target may
+# run at all -- `make up help` must not start containers.  Every goal on the
+# command line is replaced: the first prints the help, the rest do nothing.
+# Word order does not matter, and scripts/workstation-help refuses, loudly,
+# any target it has nothing to say about.
+HELP_WORDS := $(filter help examples,$(MAKECMDGOALS))
+HELP_TOPICS := $(filter-out help examples,$(MAKECMDGOALS))
+
+ifneq ($(and $(HELP_WORDS),$(HELP_TOPICS)),)
+
+.PHONY: $(MAKECMDGOALS)
+$(firstword $(MAKECMDGOALS)):
+	@./scripts/workstation-help --compose '$(COMPOSE)' --url '$(URL)' $(MAKECMDGOALS)
+$(wordlist 2,99,$(MAKECMDGOALS)):
+	@:
+
+else
+
+.PHONY: help examples engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
 	package build run test logs ps down reset selftest check lint digest
 
+# All help text lives in scripts/workstation-help, which prints targets that
+# have their own `help` and `examples` in bold on a terminal, or marked with
+# a * when piped.
 help:
-	@echo 'ROS 2 tutorial workstation'
-	@echo
-	@echo '  Targets are listed in the order you would first use them, not'
-	@echo '  alphabetically: reading top to bottom is the path from a fresh'
-	@echo '  machine to a turtle you can drive, then to your own code. The'
-	@echo '  later groups are for when something looks wrong, or for working'
-	@echo '  on the project itself.'
-	@echo
-	@echo '  Run every make command HERE, in a terminal on your own computer.'
-	@echo '  The terminal inside the browser desktop is for ROS commands'
-	@echo '  (ros2, colcon, pkg); make does not work in there.'
-	@echo
-	@echo 'Start here -- once per machine'
-	@echo '  make doctor      Check this machine can build and run the workstation'
-	@echo '  make image       Build the image (slow the first time, cached after)'
-	@echo
-	@echo 'Every session'
-	@echo '  make up                 Start the desktop'
-	@echo '  make open               Open it in your browser ($(URL))'
-	@echo '  make turtlesim          Launch turtlesim on that desktop'
-	@echo '  make turtlesim-teleop   Drive turtlesim: click its window, then the arrow keys'
-	@echo '  make shell              Turn this terminal into a ROS shell (exit to return)'
-	@echo '  make down               Stop the containers, keeping your workspace'
-	@echo
-	@echo 'Your own packages -- each prints the real ros2/colcon command it runs'
-	@echo '  make package PKG=name   Create a package  [TEMPLATE=pubsub|param] [PYTHON=1] [INTERFACES=1]'
-	@echo '  make build [PKG=name]   colcon build'
-	@echo '  make run PKG=name NODE=executable   ros2 run; Ctrl-C stops it'
-	@echo '  make test [PKG=name]    colcon test, with the real pass/fail verdict'
-	@echo
-	@echo 'When something looks wrong'
-	@echo '  make engine      Show which container engine was detected'
-	@echo '  make logs        Follow the container logs'
-	@echo '  make selftest    Check the workstation itself (~10 min; never touches your work)'
-	@echo
-	@echo 'Working on this project'
-	@echo '  make check       Fast tests for the host scripts (seconds, no containers)'
-	@echo '  make lint        Validate compose.yaml and lint every script (shellcheck, Python 3.9)'
-	@echo '  make digest      Print the base-image digest to pin'
-	@echo '  make reset       Delete containers AND volumes -- destructive, asks first'
-	@echo
-	@echo 'Container engine: $(if $(COMPOSE),$(COMPOSE),none detected - run "make engine")'
+	@./scripts/workstation-help --compose '$(if $(COMPOSE),$(COMPOSE),none detected - run "make engine")' --url '$(URL)'
+
+# `make examples` alone: say which targets have them.
+examples:
+	@./scripts/workstation-help examples
 
 engine:
 	@./scripts/compose-command --explain
@@ -159,6 +145,9 @@ open:
 
 # A one-off container, so it works whether or not the desktop is running.
 shell: require-engine
+	@echo 'Entering a ROS shell. Type exit to come back.'
+	@echo 'Not sure what to type? exit, then:  make shell examples'
+	@echo
 	$(COMPOSE) run --rm shell
 
 turtlesim: require-engine
@@ -281,3 +270,5 @@ digest:
 	else \
 	    ./scripts/base-image-digest $(ROS_DISTRO); \
 	fi
+
+endif  # topic-help mode, opened near the top of this file

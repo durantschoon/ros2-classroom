@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Print the workstation's help: the overview, or one target's help and examples.
+
+    workstation-help                      the overview (`make help`)
+    workstation-help shell help           what `make shell` is
+    workstation-help shell examples       things to try in it
+    workstation-help help shell examples  any word order, both sections
+
+The Makefile hands this its command-line goals unchanged, so `make shell help`
+works even though make itself has no notion of subcommands.
+
+Every command printed under "examples" has been run against this image.  Keep
+it that way: a student trusts what we print, so a wrong example is worse than
+a missing one.
+
+Stdlib only, Python 3.9-compatible.
+"""
+
+import os
+import sys
+from enum import Enum
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+
+
+class Section(Enum):
+    HELP = "help"
+    EXAMPLES = "examples"
+
+
+class Topic(Enum):
+    SHELL = "shell"
+    PACKAGE = "package"
+    BUILD = "build"
+    RUN = "run"
+    TEST = "test"
+
+
+class Row(NamedTuple):
+    command: str
+    description: str
+    topic: Optional[Topic]  # set when `make <target> help|examples` exists
+
+
+class Group(NamedTuple):
+    title: str
+    rows: Tuple[Row, ...]
+
+
+class Request(NamedTuple):
+    topics: Tuple[Topic, ...]
+    sections: Tuple[Section, ...]
+    unknown: Tuple[str, ...]
+    compose: str
+    url: str
+
+
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+INTRO = """\
+  Targets are listed in the order you would first use them, not
+  alphabetically: reading top to bottom is the path from a fresh
+  machine to a turtle you can drive, then to your own code. The
+  later groups are for when something looks wrong, or for working
+  on the project itself.
+
+  Run every make command HERE, in a terminal on your own computer.
+  The terminal inside the browser desktop is for ROS commands
+  (ros2, colcon, pkg); make does not work in there."""
+
+
+def groups(url: str) -> Tuple[Group, ...]:
+    return (
+        Group("Start here -- once per machine", (
+            Row("make doctor", "Check this machine can build and run the workstation", None),
+            Row("make image", "Build the image (slow the first time, cached after)", None),
+        )),
+        Group("Every session", (
+            Row("make up", "Start the desktop", None),
+            Row("make open", "Open it in your browser ({})".format(url), None),
+            Row("make turtlesim", "Launch turtlesim on that desktop", None),
+            Row("make turtlesim-teleop",
+                "Drive turtlesim: click its window, then the arrow keys", None),
+            Row("make shell", "Turn this terminal into a ROS shell (exit to return)",
+                Topic.SHELL),
+            Row("make down", "Stop the containers, keeping your workspace", None),
+        )),
+        Group("Your own packages -- each prints the real ros2/colcon command it runs", (
+            Row("make package PKG=name", "Create a package, empty or from a template",
+                Topic.PACKAGE),
+            Row("make build [PKG=name]", "colcon build", Topic.BUILD),
+            Row("make run PKG=name NODE=exe", "ros2 run; Ctrl-C stops it", Topic.RUN),
+            Row("make test [PKG=name]", "colcon test, with the real pass/fail verdict",
+                Topic.TEST),
+        )),
+        Group("When something looks wrong", (
+            Row("make engine", "Show which container engine was detected", None),
+            Row("make logs", "Follow the container logs", None),
+            Row("make selftest",
+                "Check the workstation itself (~10 min; never touches your work)", None),
+        )),
+        Group("Working on this project", (
+            Row("make check", "Fast tests for the host scripts (seconds, no containers)", None),
+            Row("make lint",
+                "Validate compose.yaml and lint every script (shellcheck, Python 3.9)", None),
+            Row("make digest", "Print the base-image digest to pin", None),
+            Row("make reset", "Delete containers AND volumes -- destructive, asks first", None),
+        )),
+    )
+
+
+# --- topic text ---------------------------------------------------------------
+# {compose} is the detected compose command, e.g. "docker compose".
+
+TEXT: Dict[Tuple[Topic, Section], str] = {
+    (Topic.SHELL, Section.HELP): """\
+make shell -- a ROS command line in this terminal
+
+  What it is
+    A fresh, throwaway container with ROS already set up. It shares your
+    /workspace and home directory with the desktop, and it can see every
+    node running there, so you can inspect and drive turtlesim from it.
+    Type exit (or press Ctrl-D) to come back. Nothing you built is lost.
+
+  What it is not
+    - It has no display. Start turtlesim, rqt and RViz on the desktop
+      (make turtlesim, or right-click the desktop background), not here.
+    - make does not work inside it. make commands belong in this
+      terminal, before you enter the shell or after you exit it.
+    - Anything you apt-install inside it vanishes on exit. Your
+      /workspace and home directory do not.
+
+  What it runs
+    {compose} run --rm shell
+
+  Next:  make shell examples""",
+
+    (Topic.SHELL, Section.EXAMPLES): """\
+make shell -- things to try
+
+  Start turtlesim first (make turtlesim), then enter the shell (make shell).
+  Everything below is typed inside the shell.
+
+  See what is running
+    ros2 node list
+    ros2 topic list
+    ros2 topic info /turtle1/cmd_vel
+
+  Watch the turtle (Ctrl-C stops a command that keeps printing)
+    ros2 topic echo /turtle1/pose
+    ros2 topic hz /turtle1/pose
+
+  Drive it without the keyboard
+    ros2 topic pub --once /turtle1/cmd_vel geometry_msgs/msg/Twist "{{linear: {{x: 2.0}}}}"
+    ros2 topic pub --rate 1 /turtle1/cmd_vel geometry_msgs/msg/Twist "{{linear: {{x: 2.0}}, angular: {{z: 1.8}}}}"
+
+  Call a service: add a second turtle
+    ros2 service list
+    ros2 service type /spawn
+    ros2 service call /spawn turtlesim_msgs/srv/Spawn "{{x: 2, y: 2, name: turtle2}}"
+
+    Ask for the type rather than trusting a tutorial: guides written for
+    older ROS releases say turtlesim/srv/Spawn, which fails on this one
+    with "The passed service type is invalid".
+
+  Change a parameter while the node runs
+    ros2 param list /turtlesim
+    ros2 param set /turtlesim background_r 150
+
+  What is inside a message?
+    ros2 interface show geometry_msgs/msg/Twist
+
+  Your own code (the same things make package and make build run)
+    pkg new my_robot --template pubsub
+    pkg build my_robot
+    ros2 run my_robot talker""",
+
+    (Topic.PACKAGE, Section.HELP): """\
+make package -- create a ROS package in your workspace
+
+  Usage
+    make package PKG=name [TEMPLATE=pubsub|param] [PYTHON=1] [INTERFACES=1]
+
+  PKG=name          Required. Lowercase letters, digits and underscores,
+                    starting with a letter: my_robot, not MyRobot or my-robot.
+  TEMPLATE=pubsub   Start from working code: a talker and a listener node,
+                    plus a launch file that starts both.
+  TEMPLATE=param    Start from a node with a parameter you can change
+                    while it runs.
+  PYTHON=1          A Python (ament_python) package. The default is C++
+                    (ament_cmake).
+  INTERFACES=1      A package of your own message and service types
+                    (.msg and .srv). It cannot be combined with TEMPLATE or
+                    PYTHON: interface packages are always ament_cmake, and
+                    they are kept separate so other packages can depend on
+                    your messages without pulling in your nodes.
+
+  With no TEMPLATE you get the empty package that ros2 pkg create makes.
+
+  Where it goes
+    /workspace/src/<name>, on a volume that survives make down and image
+    rebuilds. Look at or edit the files from the desktop's terminal, from
+    make shell, or from VS Code ("Reopen in Container").
+
+  What it runs
+    ros2 pkg create <name> --build-type ... --dependencies ...
+    The full command is printed before it runs, quoted so that you can
+    paste it into any ROS shell and get the same package.
+
+  It needs the desktop running (make up). An existing package is never
+  overwritten: creating the same name twice is refused.
+
+  Next:  make package examples""",
+
+    (Topic.PACKAGE, Section.EXAMPLES): """\
+make package -- examples
+
+  A C++ talker and listener
+    make package PKG=my_robot TEMPLATE=pubsub
+    make build PKG=my_robot
+    make run PKG=my_robot NODE=talker
+    make run PKG=my_robot NODE=listener      (in a second terminal)
+
+  The same in Python
+    make package PKG=my_robot_py PYTHON=1 TEMPLATE=pubsub
+
+  Both nodes at once, from make shell
+    ros2 launch my_robot demo.launch.py
+
+  A node with a live parameter
+    make package PKG=my_params TEMPLATE=param
+    make build PKG=my_params
+    make run PKG=my_params NODE=param_node
+    then, from make shell:
+      ros2 param set /param_node greeting "good evening"
+
+  Your own message and service types
+    make package PKG=my_robot_msgs INTERFACES=1
+    make build PKG=my_robot_msgs
+    then, from make shell:
+      ros2 interface show my_robot_msgs/msg/Temperature
+      ros2 interface show my_robot_msgs/srv/AddTwoInts
+
+  An empty package, to fill in by following a tutorial
+    make package PKG=scratch""",
+
+    (Topic.BUILD, Section.HELP): """\
+make build -- compile your packages with colcon
+
+  Usage
+    make build              every package in /workspace/src
+    make build PKG=name     just that one
+
+  What it runs
+    colcon build --symlink-install [--packages-select <name>]
+    Printed before it runs. --symlink-install means edits to Python files
+    and launch files take effect without rebuilding.
+
+  After a single-package build it lists that package's executables, which
+  are the names to give make run as NODE=.
+
+  Build products go to /workspace/build, /workspace/install and
+  /workspace/log, beside src. New shells pick up the built packages
+  automatically; a shell that was already open needs
+    source /workspace/install/setup.bash
+
+  It needs the desktop running (make up).
+
+  Next:  make build examples""",
+
+    (Topic.BUILD, Section.EXAMPLES): """\
+make build -- examples
+
+  Build one package, then run what it built
+    make build PKG=my_robot
+    make run PKG=my_robot NODE=talker
+
+  Build everything in the workspace
+    make build
+
+  See every package colcon can find, from make shell
+    pkg list
+
+  A build failed and you want a clean slate for one package, from make shell
+    rm -rf /workspace/build/my_robot /workspace/install/my_robot
+    pkg build my_robot""",
+
+    (Topic.RUN, Section.HELP): """\
+make run -- run one of your nodes
+
+  Usage
+    make run PKG=name NODE=executable
+
+  NODE is an executable name, as listed at the end of make build PKG=name.
+  The pubsub template builds talker and listener; the param template
+  builds param_node.
+
+  What it runs
+    ros2 run <name> <executable>
+    Printed before it runs.
+
+  The node runs in the foreground of this terminal, so Ctrl-C stops it. To
+  run two nodes, use two terminals. A node that opens a window shows it on
+  the browser desktop.
+
+  It needs the desktop running (make up), and the package built
+  (make build PKG=name).
+
+  Next:  make run examples""",
+
+    (Topic.RUN, Section.EXAMPLES): """\
+make run -- examples
+
+  A talker and a listener, in two terminals
+    make run PKG=my_robot NODE=talker
+    make run PKG=my_robot NODE=listener
+
+  Check the talker from make shell instead of running the listener
+    ros2 topic echo /chatter
+
+  A node with a parameter
+    make run PKG=my_params NODE=param_node
+    then, from make shell:
+      ros2 param set /param_node greeting "good evening"
+
+  Forgotten the executable names? Building prints them again
+    make build PKG=my_robot""",
+
+    (Topic.TEST, Section.HELP): """\
+make test -- run your packages' tests and report the real verdict
+
+  Usage
+    make test               every package
+    make test PKG=name      just that one
+
+  What it runs
+    colcon test [--packages-select <name>]
+    colcon test-result --verbose
+
+  Why two commands: colcon test exits successfully even when tests fail.
+  The verdict only comes from colcon test-result, so this runs both, and
+  the last line is what counts, for example
+    Summary: 14 tests, 0 errors, 0 failures, 2 skipped
+
+  A package made by make package already has tests: the standard ROS style
+  and lint checks. They pass on a fresh package, so a failure after your
+  edits points at something you changed, usually formatting.
+
+  The "2 skipped" on a fresh C++ package are the copyright checks. ROS
+  switches them off in a new package until you add a copyright header to
+  your source files and remove the two ament_cmake_..._FOUND lines from
+  CMakeLists.txt.
+
+  It needs the desktop running (make up), and the package built.
+
+  Next:  make test examples""",
+
+    (Topic.TEST, Section.EXAMPLES): """\
+make test -- examples
+
+  Test one package
+    make test PKG=my_robot
+
+  Test everything
+    make test
+
+  Read one failure in full, from make shell
+    colcon test-result --verbose --test-result-base /workspace/build/my_robot
+
+  The usual culprit is code style. See exactly what the checker wants, from
+  make shell
+    ament_flake8 /workspace/src/my_robot_py          (Python)
+    ament_uncrustify /workspace/src/my_robot         (C++)""",
+}
+
+
+# --- pure core ------------------------------------------------------------------
+
+
+def parse(argv: Sequence[str]) -> Request:
+    """Turn make's goal words (plus --compose/--url) into a Request, once."""
+    compose = "docker compose"
+    url = "http://localhost:6080"
+    topics: List[Topic] = []
+    sections: List[Section] = []
+    unknown: List[str] = []
+    words = list(argv)
+    while words:
+        word = words.pop(0)
+        if word in ("--compose", "--url"):
+            value = words.pop(0) if words else ""
+            if word == "--compose":
+                compose = value or compose
+            else:
+                url = value or url
+        elif word in (s.value for s in Section):
+            section = Section(word)
+            if section not in sections:
+                sections.append(section)
+        elif word in (t.value for t in Topic):
+            topic = Topic(word)
+            if topic not in topics:
+                topics.append(topic)
+        else:
+            unknown.append(word)
+    return Request(tuple(topics), tuple(sections), tuple(unknown), compose, url)
+
+
+def render_overview(request: Request, bold: bool) -> str:
+    lines = ["ROS 2 tutorial workstation", "", INTRO, ""]
+    if bold:
+        lines.append("  Targets in {}bold{} have more to say:".format(BOLD, RESET))
+    else:
+        lines.append("  Targets marked * have more to say:")
+    lines.append("    make <target> help       what it does, its options, what it runs")
+    lines.append("    make <target> examples   things to try, ready to copy")
+    for group in groups(request.url):
+        lines.append("")
+        lines.append(group.title)
+        width = max(len(row.command) for row in group.rows)
+        for row in group.rows:
+            padding = " " * (width - len(row.command))
+            if row.topic is None:
+                lead, command = "  ", row.command
+            elif bold:
+                lead, command = "  ", BOLD + row.command + RESET
+            else:
+                lead, command = "* ", row.command
+            lines.append("{}{}{}   {}".format(lead, command, padding, row.description))
+    lines.append("")
+    lines.append("Container engine: {}".format(request.compose))
+    return "\n".join(lines)
+
+
+def render_topics(request: Request) -> str:
+    sections = request.sections or (Section.HELP,)
+    blocks = []
+    for topic in request.topics:
+        for section in sections:
+            blocks.append(TEXT[(topic, section)].format(compose=request.compose))
+    return "\n\n".join(blocks)
+
+
+def render_topic_list() -> str:
+    names = "  ".join(t.value for t in Topic)
+    return ("These targets have help and examples:  {}\n"
+            "  make <target> help\n"
+            "  make <target> examples".format(names))
+
+
+def render_unknown(unknown: Sequence[str]) -> str:
+    return ("No extra help for: {}\n"
+            "Nothing was run.\n\n{}\n\n"
+            "For everything else:  make help".format(" ".join(unknown), render_topic_list()))
+
+
+def wants_bold(isatty: bool, environ: Dict[str, str]) -> bool:
+    if environ.get("NO_COLOR"):
+        return False
+    if environ.get("CLICOLOR_FORCE", "0") not in ("", "0"):
+        return True
+    return isatty and environ.get("TERM", "") != "dumb"
+
+
+# --- imperative shell -------------------------------------------------------------
+
+
+def main(argv: Sequence[str]) -> int:
+    request = parse(argv)
+    if request.unknown:
+        # A word that is neither a topic nor a section, e.g. `make up help`.
+        # Refuse rather than guess, and say plainly that nothing ran.
+        print(render_unknown(request.unknown), file=sys.stderr)
+        return 2
+    if request.topics:
+        print(render_topics(request))
+    elif Section.EXAMPLES in request.sections:
+        print(render_topic_list())
+    else:
+        print(render_overview(request, wants_bold(sys.stdout.isatty(), dict(os.environ))))
+    return 0
+
+
+def run() -> int:
+    # `make help | head` closes the pipe early.  That is not an error, and a
+    # student must never see a traceback for it.
+    try:
+        status = main(sys.argv[1:])
+        sys.stdout.flush()
+        return status
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run())
