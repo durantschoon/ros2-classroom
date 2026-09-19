@@ -157,14 +157,12 @@ More environment facts learned the hard way:
 - The local `python3` is 3.10. Real 3.9 is
   `podman run --rm -v "$PWD":/repo:ro -w /repo docker.io/library/python:3.9-slim …`.
 
-## Lessons that belong upstream
+## Lessons that belong elsewhere
 
 A retro's lessons go to two places. What is true of *this repository* stays in
-this file. What would be true of *any* repository goes to
-[SKILL-FEEDBACK.md](SKILL-FEEDBACK.md), as entries ready to apply to the
-`stage-pipeline` skill and the `stage-executor` agent at their source. The
-skill's own retro step had no such leg, so until now every retro improved one
-repository and nothing else; `sf-001` there proposes the fix to the skill.
+this file. What would be true of any repository is a lesson about shared
+tooling that lives elsewhere, and it is filed privately, outside this
+repository, never here. This repository holds only its own process records.
 
 ## Backlog from the reports' Open questions
 
