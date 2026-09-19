@@ -198,8 +198,8 @@ Unresolved, and deliberately not slipped into a port stage:
 | 02 | Tests only | Black-box tests for the host scripts; smoke coverage for `tutorial` and `init-workspace` | alone | merged |
 | 03 | Port | Container scripts: `pkg`, `tutorial`, `init-workspace`, `install-ros-packages` | parallel with 04 | merged |
 | 04 | Port | Host scripts: `compose-command`, `compose-up`, `check-host`, `run-quiet`, `open-url`, `base-image-digest` | parallel with 03 | merged |
-| 05 | Tests only | Black-box tests for `scripts/smoke-container` itself: isolation, accounting, cleanup (retro first) | alone | next |
-| 06 | Port | `scripts/smoke-container`, last | alone | |
+| 05 | Tests only | Black-box tests for `scripts/smoke-container` itself: isolation, accounting, cleanup (retro first) | alone | merged |
+| 06 | Port | `scripts/smoke-container`, last | alone | next |
 
 The suite's port was planned as stage 05. It became stage 06 when the rule
 "tests before ports" was applied to the suite itself: it judged every other
