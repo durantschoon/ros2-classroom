@@ -45,8 +45,10 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # ci-annotate re-prints any FAIL lines as annotations, which are readable
+      # on the pull request without signing in; job logs are not.
       - name: Build and run the smoke tests
-        run: ./scripts/smoke-container
+        run: ./scripts/ci-annotate smoke -- ./scripts/smoke-container
 
   # Second architecture: build only.  GitHub's arm64 runners cannot run the
   # graphical smoke tests reliably, so this guards the package availability
@@ -102,7 +104,7 @@ jobs:
       - name: Smoke tests under Podman
         env:
           COMPOSE: podman-compose
-        run: ./scripts/smoke-container
+        run: ./scripts/ci-annotate smoke-podman -- ./scripts/smoke-container
 
   scan:
     runs-on: ubuntu-latest
@@ -115,7 +117,7 @@ jobs:
         run: docker compose build
 
       - name: Scan for known vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ros2-tutorials:lyrical
           format: table
