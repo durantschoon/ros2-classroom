@@ -81,6 +81,7 @@ docker compose up -d
 | `make logs` | Follow container logs |
 | `make down` | Stop containers, keep your work |
 | `make reset` | Delete containers **and volumes** (asks first) |
+| `make uninstall` | Delete all of that **and the images**, freeing the disk (asks first) |
 | `make selftest` | Check the workstation itself with the automated smoke tests |
 | `make package PKG=name` | Create a ROS package, optionally from a template |
 | `make build [PKG=name]` | `colcon build` your packages |

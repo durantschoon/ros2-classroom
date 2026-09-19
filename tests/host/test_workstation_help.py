@@ -32,7 +32,8 @@ class OverviewTests(ScriptTestCase):
         run = self.run_script()
         for target in ("doctor", "image", "up", "open", "turtlesim", "turtlesim-teleop",
                        "shell", "down", "package", "build", "run", "test",
-                       "engine", "logs", "selftest", "check", "lint", "digest", "reset"):
+                       "engine", "logs", "selftest", "check", "lint", "digest", "reset",
+                       "uninstall"):
             self.assertHas(run, "make " + target)
 
     def test_the_url_and_the_compose_command_are_the_ones_passed_in(self):

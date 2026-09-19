@@ -76,6 +76,7 @@ so every target has a plain equivalent:
 | `make turtlesim` | `docker compose exec -d -u ros -e DISPLAY=:1 desktop bash -lc "ros2 run turtlesim turtlesim_node"` |
 | `make down` | `docker compose down` |
 | `make reset` | `docker compose down --volumes` |
+| `make uninstall` | `docker compose down --volumes --rmi all`, then `docker image rm` the `ros` base image |
 
 If you clone into a Windows path and run from WSL, keep the repository inside
 the WSL filesystem (`~/...`, not `/mnt/c/...`). Build context reads across the
