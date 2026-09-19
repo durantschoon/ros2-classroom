@@ -60,7 +60,7 @@ else
 
 .PHONY: help examples engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
-	package build run test logs ps down reset selftest check lint digest
+	package build run test logs ps down reset uninstall selftest check lint digest
 
 # All help text lives in scripts/workstation-help, which prints targets that
 # have their own `help` and `examples` in bold on a terminal, or marked with
@@ -243,6 +243,11 @@ reset: require-engine
 	    if [ "$$answer" = "delete" ]; then $(QUIET) $(COMPOSE) down -v --remove-orphans; \
 	    else echo 'aborted; nothing was removed'; exit 1; fi; \
 	fi
+
+# Everything reset removes, plus the images, for both the student's project and
+# the self-test's.  Shows what it found, with sizes, and asks unless YES=1.
+uninstall: require-engine
+	@ENGINE='$(ENGINE)' YES='$(YES)' ./scripts/uninstall
 
 # The workstation's own smoke suite, not the student's tests: builds the image,
 # exercises every documented workflow, then removes its containers and volumes.

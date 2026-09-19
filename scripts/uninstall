@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""Remove everything the workstation put on this machine, after asking.
+
+    make uninstall          show what would be removed, then ask
+    make uninstall YES=1    remove it without asking
+
+`make reset` removes containers and volumes but keeps the images, which are
+most of the disk space.  This removes, for both the student's project and the
+self-test's:
+
+- the containers, running or stopped
+- the named volumes (the student's code, builds, and settings)
+- the compose networks
+- the built image, and the digest-pinned ROS base image it was built from
+
+It talks to the engine directly rather than through compose, so it works
+whatever state compose left behind, and it never touches anything outside
+those names.  The engine's build cache is shared with every other project on
+the machine, so it is reported, not removed.
+
+Expects ENGINE from the Makefile.
+
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
+
+import os
+import re
+import signal
+import subprocess
+import sys
+from enum import Enum
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Sequence, Tuple
+
+REPO = Path(__file__).resolve().parent.parent
+
+DEFAULT_IMAGE_NAME = "ros2-tutorials"
+DEFAULT_ROS_DISTRO = "lyrical"
+DEFAULT_ROS_REGISTRY = "docker.io/library"
+
+# The student's project (the `name:` in compose.yaml) and the self-test's own.
+DEFAULT_PROJECT = "ros2-tutorials"
+DEFAULT_SELFTEST_PROJECT = "ros2-tutorials-selftest"
+
+# The named volumes in compose.yaml, and what a student would lose with each.
+# Volumes and networks are FOUND by label; this only describes them.
+VOLUMES = (
+    ("ros-workspace", "src/, build/, install/, log/"),
+    ("ros-home", "shell history, rosdep cache, settings"),
+)
+
+PROJECT_LABEL = "com.docker.compose.project"
+
+CONFIRM_WORD = "uninstall"
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+
+
+class Engine(Enum):
+    """The two container engines this project supports, and nothing else."""
+
+    DOCKER = "docker"
+    PODMAN = "podman"
+
+    @classmethod
+    def parse(cls, text: str) -> Optional["Engine"]:
+        for member in cls:
+            if member.value == text:
+                return member
+        return None
+
+
+class Kind(Enum):
+    """What sort of engine object a removal is, in the order they must go."""
+
+    CONTAINER = "container"
+    VOLUME = "volume"
+    NETWORK = "network"
+    IMAGE = "image"
+
+
+class Item(NamedTuple):
+    """One thing found on this machine that uninstall would remove."""
+
+    kind: Kind
+    ref: str  # what the engine is told to remove
+    label: str  # what the student is shown
+    size: int  # bytes, or 0 when unknown
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def base_digest(dockerfile: str) -> str:
+    """The ROS_BASE_DIGEST default declared in the Dockerfile, or ""."""
+    match = re.search(r"^ARG ROS_BASE_DIGEST=(\S+)", dockerfile, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def base_image_ref(registry: str, digest: str) -> str:
+    """The reference the base image was pulled under: <registry>/ros@<digest>.
+
+    Built FROM a digest, the base has no tag of its own; this is the only name
+    that finds it, and removing it by that name leaves any other tag of the
+    same image (a student's own `ros:lyrical` pull, say) alone.
+    """
+    if not digest:
+        return ""
+    return "{}/ros@{}".format(registry.rstrip("/"), digest)
+
+
+def describe_volume(name: str, project: str) -> str:
+    """A volume's name, with what a student would lose when compose.yaml says."""
+    prefix = project + "_"
+    short = name[len(prefix):] if name.startswith(prefix) else ""
+    content = dict(VOLUMES).get(short, "")
+    return "{}  ({})".format(name, content) if content else name
+
+
+def human_size(size: int) -> str:
+    """Bytes in the decimal units the engines themselves print."""
+    if size < 1000:
+        return "{} B".format(size)
+    value = size / 1000.0
+    for unit in ("kB", "MB"):
+        if value < 1000:
+            return "{:.1f} {}".format(value, unit)
+        value /= 1000
+    return "{:.1f} GB".format(value)
+
+
+def plan_lines(items: Sequence[Item]) -> List[str]:
+    """What the student reads before confirming: one line per item, then a total."""
+    lines = ["This removes, from this machine:"]
+    for item in items:
+        size = "  ({})".format(human_size(item.size)) if item.size else ""
+        lines.append("  {:<9} {}{}".format(item.kind.value, item.label, size))
+    total = sum(item.size for item in items)
+    if total:
+        lines.append("Frees at least {}.".format(human_size(total)))
+    return lines
+
+
+def removal_argv(engine: Engine, kind: Kind, refs: Sequence[str]) -> List[str]:
+    """The one engine command that removes every item of one kind."""
+    if kind is Kind.CONTAINER:
+        return [engine.value, "rm", "-f"] + list(refs)
+    return [engine.value, kind.value, "rm"] + list(refs)
+
+
+def cache_hint(engine: Engine) -> str:
+    if engine is Engine.DOCKER:
+        command = "docker builder prune"
+    else:
+        command = "podman image prune"
+    return (
+        "Not removed: the engine's build cache, which other projects share. "
+        "To clear it too:  {}".format(command)
+    )
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def capture(argv: Sequence[str]) -> Optional[str]:
+    """The command's stdout with trailing newlines dropped, or None if it failed."""
+    try:
+        completed = subprocess.run(
+            list(argv),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.decode("utf-8", errors="replace").rstrip("\n")
+
+
+def run_quietly(argv: Sequence[str]) -> Tuple[bool, str]:
+    """Run a removal; report success and, on failure, the engine's own words."""
+    try:
+        completed = subprocess.run(
+            list(argv),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as err:
+        return False, err.strerror or str(err)
+    message = completed.stderr.decode("utf-8", errors="replace").strip()
+    return completed.returncode == 0, message
+
+
+def to_int(text: Optional[str]) -> int:
+    try:
+        return int((text or "").strip())
+    except ValueError:
+        return 0
+
+
+def find_containers(engine: Engine, project: str) -> List[Item]:
+    found = capture([
+        engine.value, "ps", "-a",
+        "--filter", "label={}={}".format(PROJECT_LABEL, project),
+        "--format", "{{.Names}}",
+    ])
+    names = [line for line in (found or "").split("\n") if line.strip()]
+    return [Item(Kind.CONTAINER, name, name, 0) for name in names]
+
+
+def find_labelled(engine: Engine, kind: Kind, project: str) -> List[Item]:
+    """A project's volumes or networks, by the label both compose tools set."""
+    found = capture([
+        engine.value, kind.value, "ls",
+        "--filter", "label={}={}".format(PROJECT_LABEL, project),
+        "--format", "{{.Name}}",
+    ])
+    names = [line for line in (found or "").split("\n") if line.strip()]
+    if kind is Kind.VOLUME:
+        return [Item(kind, name, describe_volume(name, project), 0) for name in names]
+    return [Item(kind, name, name, 0) for name in names]
+
+
+def find_image(engine: Engine, ref: str, names: Sequence[str]) -> List[Item]:
+    """The first of `names` the engine knows, shown as `ref`."""
+    for name in names:
+        size = capture([engine.value, "image", "inspect", "--format", "{{.Size}}", name])
+        if size is not None:
+            return [Item(Kind.IMAGE, name, ref, to_int(size))]
+    return []
+
+
+def survey(engine: Engine) -> List[Item]:
+    """Everything of the workstation's that exists, in removal order."""
+    projects = [
+        os.environ.get("COMPOSE_PROJECT_NAME") or DEFAULT_PROJECT,
+        os.environ.get("SELFTEST_PROJECT") or DEFAULT_SELFTEST_PROJECT,
+    ]
+    image = "{}:{}".format(
+        os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME,
+        os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO,
+    )
+    try:
+        dockerfile = (REPO / "Dockerfile").read_text()
+    except OSError:
+        dockerfile = ""
+    base = base_image_ref(
+        os.environ.get("ROS_REGISTRY") or DEFAULT_ROS_REGISTRY,
+        os.environ.get("ROS_BASE_DIGEST") or base_digest(dockerfile),
+    )
+
+    items = []  # type: List[Item]
+    for project in projects:
+        items += find_containers(engine, project)
+    for project in projects:
+        items += find_labelled(engine, Kind.VOLUME, project)
+    for project in projects:
+        items += find_labelled(engine, Kind.NETWORK, project)
+    # Podman names a locally built image localhost/<name>.
+    items += find_image(engine, image, [image, "localhost/" + image])
+    if base:
+        items += find_image(engine, base, [base])
+    return items
+
+
+def confirmed(yes: bool) -> Optional[bool]:
+    """True to go ahead, False to stop, None when there is no one to ask."""
+    if yes:
+        return True
+    if not sys.stdin.isatty():
+        return None
+    try:
+        answer = input('Type "{}" to confirm: '.format(CONFIRM_WORD))
+    except EOFError:
+        return False
+    return answer.strip() == CONFIRM_WORD
+
+
+def remove(engine: Engine, items: Sequence[Item]) -> bool:
+    """Remove every item, one engine call per kind; True if all of them went."""
+    ok = True
+    for kind in Kind:
+        refs = [item.ref for item in items if item.kind is kind]
+        if not refs:
+            continue
+        argv = removal_argv(engine, kind, refs)
+        print("+ " + " ".join(argv), flush=True)
+        succeeded, message = run_quietly(argv)
+        if not succeeded:
+            ok = False
+            print("  failed: {}".format(message or "no reason given"), file=sys.stderr)
+    return ok
+
+
+def main() -> int:
+    engine_name = os.environ.get("ENGINE", "")
+    engine = Engine.parse(engine_name)
+    if engine is None:
+        print(
+            "uninstall: ENGINE is {!r}, which is neither docker nor podman; "
+            "run this through make".format(engine_name),
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    items = survey(engine)
+    if not items:
+        print("Nothing of the workstation's is on this machine; nothing to remove.")
+        print(cache_hint(engine))
+        return EXIT_OK
+
+    for line in plan_lines(items):
+        print(line)
+    print()
+
+    answer = confirmed(os.environ.get("YES", "") == "1")
+    if answer is None:
+        print(
+            "uninstall: not asking without a terminal; rerun with YES=1 to remove these.",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
+    if not answer:
+        print("aborted; nothing was removed")
+        return EXIT_FAILED
+
+    ok = remove(engine, items)
+    print()
+    print(cache_hint(engine))
+    print("This checkout is still at {}; delete it yourself when you are done.".format(REPO))
+    return EXIT_OK if ok else EXIT_FAILED
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main())

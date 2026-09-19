@@ -58,6 +58,8 @@ ever met the *fake* `docker` in the tests. This is their first real one.
       explanation still reads correctly and nothing is recreated twice
 - [ ] `make logs` works (it is the Podman 3 path that is known broken)
 - [ ] No Podman-only noise anywhere: no CNI warnings, no "shared mount" line
+- [ ] `make uninstall` — lists containers, volumes, network, and both images
+      with sizes, asks, removes them; run again, it reports nothing to remove
 
 **Watch for:** if the build falls back to `linux/amd64` it will run under Rosetta
 and the software-rendered desktop will be noticeably slow — that is a bug to
@@ -91,6 +93,8 @@ Podman inside WSL.
 - [ ] Persistence across `make down && make up`
 - [ ] `make selftest` — record counts
 - [ ] `make down` clean
+- [ ] `make uninstall` — lists containers, volumes, network, and both images
+      with sizes, asks, removes them; run again, it reports nothing to remove
 
 ### B2. From PowerShell
 
@@ -126,6 +130,8 @@ Windows shim and fails.
 - [ ] Persistence across `make down && make up`
 - [ ] `make selftest` — record counts
 - [ ] `make down` clean
+- [ ] `make uninstall` — lists containers, volumes, network, and both images
+      with sizes, asks, removes them; run again, it reports nothing to remove
 - [ ] If Podman: confirm no CNI warnings leak through the Make targets, and that
       `VERBOSE=1 make up` shows them again
 
