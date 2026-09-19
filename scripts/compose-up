@@ -1,46 +1,231 @@
-#!/bin/sh
-# Start the workstation, recreating the desktop only when its image is stale.
-#
-# Docker Compose recreates a container whose image has changed; podman-compose
-# does not -- it only creates containers that are missing.  Without this check,
-# `make image` followed by `make up` keeps running the OLD image on Podman, with
-# no warning.  Comparing image ids here gives both engines Docker's behaviour.
-#
-# Expects COMPOSE and ENGINE from the Makefile.
-set -eu
+#!/usr/bin/env python3
+"""Start the workstation, recreating the desktop only when its image is stale.
 
-cd "$(dirname "$0")/.."
+Docker Compose recreates a container whose image has changed; podman-compose
+does not -- it only creates containers that are missing.  Without this check,
+`make image` followed by `make up` keeps running the OLD image on Podman, with
+no warning.  Comparing image ids here gives both engines Docker's behaviour.
 
-compose="${COMPOSE:?COMPOSE is not set; run this through make}"
-engine="${ENGINE:?ENGINE is not set; run this through make}"
-image="${IMAGE_NAME:-ros2-tutorials}:${ROS_DISTRO:-lyrical}"
+Expects COMPOSE and ENGINE from the Makefile.
 
-# Docker reports ids as sha256:<hex>, Podman as bare <hex>.
-bare() { sed 's/^sha256://'; }
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
 
-current="$($engine image inspect --format '{{.Id}}' "${image}" 2>/dev/null \
-    || $engine image inspect --format '{{.Id}}' "localhost/${image}" 2>/dev/null \
-    || true)"
+import os
+import signal
+import subprocess
+import sys
+from enum import Enum
+from pathlib import Path
+from typing import List, Optional, Sequence
 
-# Both compose implementations set these labels.  The project name is fixed by
-# `name:` in compose.yaml.
-container="$($engine ps -a -q \
-    --filter label=com.docker.compose.project=ros2-tutorials \
-    --filter label=com.docker.compose.service=desktop 2>/dev/null | head -1)"
+REPO = Path(__file__).resolve().parent.parent
 
-recreate=''
-if [ -n "${container}" ] && [ -n "${current}" ]; then
-    running="$($engine inspect --format '{{.Image}}' "${container}" 2>/dev/null || true)"
-    if [ "$(printf '%s' "${running}" | bare)" != "$(printf '%s' "${current}" | bare)" ]; then
-        echo 'The image was rebuilt since this desktop started, so it will be recreated.'
-        echo 'Kept: /workspace and /home/ros (your code, builds, and settings).'
-        echo 'Lost: anything added with apt or install-ros-packages inside the old container.'
-        echo
-        recreate='--force-recreate'
-    fi
-fi
+DEFAULT_IMAGE_NAME = "ros2-tutorials"
+DEFAULT_ROS_DISTRO = "lyrical"
 
-# shellcheck disable=SC2086  # compose may be two words, e.g. "docker compose"
-echo "+ ${compose} up -d${recreate:+ ${recreate}}"
-# shellcheck disable=SC2086
-exec ${compose} up -d ${recreate}
+# The `name:` in compose.yaml, used when nothing overrides the project.
+DEFAULT_PROJECT = "ros2-tutorials"
+
+# Both compose implementations set these labels on every container they create.
+PROJECT_LABEL = "com.docker.compose.project"
+SERVICE_LABEL = "com.docker.compose.service"
+DESKTOP_SERVICE = "desktop"
+
+# Every spelling of the project-name flag that compose itself accepts.
+PROJECT_FLAGS = ("-p", "--project-name")
+
+STALE = [
+    "The image was rebuilt since this desktop started, so it will be recreated.",
+    "Kept: /workspace and /home/ros (your code, builds, and settings).",
+    "Lost: anything added with apt or install-ros-packages inside the old container.",
+    "",
+]
+
+EXIT_USAGE = 2
+EXIT_NOT_RUN = 127
+
+
+class Engine(Enum):
+    """The two container engines this project supports, and nothing else."""
+
+    DOCKER = "docker"
+    PODMAN = "podman"
+
+    @classmethod
+    def parse(cls, text: str) -> Optional["Engine"]:
+        for member in cls:
+            if member.value == text:
+                return member
+        return None
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def bare(image_id: str) -> str:
+    """An image id without its prefix: Docker says sha256:<hex>, Podman <hex>."""
+    prefix = "sha256:"
+    return image_id[len(prefix):] if image_id.startswith(prefix) else image_id
+
+
+def is_stale(current: str, running: str) -> bool:
+    """True when the desktop is running an image other than the one built.
+
+    An empty id on either side means there is nothing to compare -- no image
+    built yet, or no container yet -- and so is never stale.
+    """
+    if not current or not running:
+        return False
+    return bare(running) != bare(current)
+
+
+def project_name(compose_words: Sequence[str], env_project: str) -> str:
+    """The compose project whose desktop this invocation is about.
+
+    In precedence: a project-name flag in COMPOSE, then COMPOSE_PROJECT_NAME,
+    then the `name:` in compose.yaml.  Looking it up (rather than hardcoding the
+    default) is what lets the stale-image check work under `-p something-else`,
+    which is exactly when a second, differently named desktop is running.
+    """
+    found = ""
+    index = 0
+    while index < len(compose_words):
+        word = compose_words[index]
+        for flag in PROJECT_FLAGS:
+            if word == flag:
+                if index + 1 < len(compose_words):
+                    found = compose_words[index + 1]
+                    index += 1
+                break
+            if word.startswith(flag + "="):
+                found = word[len(flag) + 1:]
+                break
+        else:
+            # The attached short form, -pNAME, which compose also accepts.
+            # "--profile" and friends start with "--", so they cannot match.
+            if word.startswith("-p") and not word.startswith("--") and len(word) > 2:
+                found = word[2:]
+        index += 1
+    # A later flag beats an earlier one, as it does for compose itself.
+    if found:
+        return found
+    if env_project:
+        return env_project
+    return DEFAULT_PROJECT
+
+
+def desktop_filters(project: str) -> List[str]:
+    return [
+        "--filter", "label={}={}".format(PROJECT_LABEL, project),
+        "--filter", "label={}={}".format(SERVICE_LABEL, DESKTOP_SERVICE),
+    ]
+
+
+def echoed(compose: str, recreate: Sequence[str]) -> str:
+    """The `+ ...` line, showing exactly the command about to run."""
+    tail = "".join(" " + word for word in recreate)
+    return "+ {} up -d{}".format(compose, tail)
+
+
+def first_line(text: str) -> str:
+    return text.split("\n", 1)[0]
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def capture(argv: Sequence[str]) -> Optional[str]:
+    """The command's stdout with trailing newlines dropped, or None if it failed."""
+    try:
+        completed = subprocess.run(
+            list(argv),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.decode("utf-8", errors="replace").rstrip("\n")
+
+
+def image_id(engine: Engine, image: str) -> str:
+    """The id of the built image, under either name Podman might have given it."""
+    for name in (image, "localhost/" + image):
+        found = capture([engine.value, "image", "inspect", "--format", "{{.Id}}", name])
+        if found is not None:
+            return found
+    return ""
+
+
+def desktop_container(engine: Engine, project: str) -> str:
+    found = capture([engine.value, "ps", "-a", "-q"] + desktop_filters(project))
+    return "" if found is None else first_line(found)
+
+
+def running_image_id(engine: Engine, container: str) -> str:
+    found = capture([engine.value, "inspect", "--format", "{{.Image}}", container])
+    return "" if found is None else found
+
+
+def required(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        print(
+            "compose-up: {} is not set; run this through make".format(name),
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_USAGE)
+    return value
+
+
+def main() -> int:
+    os.chdir(str(REPO))
+
+    compose = required("COMPOSE")
+    engine_name = required("ENGINE")
+    engine = Engine.parse(engine_name)
+    if engine is None:
+        print(
+            "compose-up: ENGINE is {!r}, which is neither docker nor podman".format(
+                engine_name
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    compose_words = compose.split()
+    image = "{}:{}".format(
+        os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME,
+        os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO,
+    )
+
+    current = image_id(engine, image)
+    container = desktop_container(
+        engine, project_name(compose_words, os.environ.get("COMPOSE_PROJECT_NAME", ""))
+    )
+    # Nothing to compare unless both sides exist, and asking then would be a
+    # pointless extra call to the engine.
+    running = running_image_id(engine, container) if container and current else ""
+
+    recreate = []  # type: List[str]
+    if is_stale(current, running):
+        for line in STALE:
+            print(line)
+        recreate = ["--force-recreate"]
+
+    print(echoed(compose, recreate), flush=True)
+    argv = compose_words + ["up", "-d"] + recreate
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as err:
+        print("compose-up: {}: {}".format(argv[0], err.strerror), file=sys.stderr)
+    return EXIT_NOT_RUN
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main())

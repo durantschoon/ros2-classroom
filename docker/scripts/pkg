@@ -1,346 +1,641 @@
-#!/bin/bash
-# Create, build, and test ROS 2 packages in the persistent workspace.
-#
-# This is a thin layer over `ros2 pkg create` and `colcon`: every underlying
-# command is echoed before it runs, so the real workflow stays visible and you
-# can stop using this helper whenever you like.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Create, build, and test ROS 2 packages in the persistent workspace.
 
-WORKSPACE="${WORKSPACE:-/workspace}"
-TEMPLATES="${ROS_WORKSTATION_TEMPLATES:-/usr/share/ros-workstation/templates}"
+This is a thin layer over `ros2 pkg create` and `colcon`: every underlying
+command is echoed before it runs, so the real workflow stays visible and you
+can stop using this helper whenever you like.
+"""
 
-# Print a command so it can be pasted back into a shell and run as-is.  Plain
-# words stay bare for readability; anything else is single-quoted.  Printing
-# "$*" instead would show `--maintainer-name ROS Developer`, which re-parses as
-# two arguments -- and a pasteable command is the whole point of printing it.
-shell_quote() {
-    local out='' arg
-    for arg in "$@"; do
-        if [[ "${arg}" =~ ^[A-Za-z0-9_./:=@%+,-]+$ ]]; then
-            out+="${arg} "
-        else
-            out+="'${arg//\'/\'\\\'\'}' "
-        fi
-    done
-    printf '%s' "${out% }"
-}
-
-run() { printf '+ %s\n' "$(shell_quote "$@")" >&2; "$@"; }
-note() { printf '%s\n' "$*" >&2; }
-
-# The Makefile sets PKG_VIA_MAKE=1, so a student who typed `make package` is
-# pointed at `make build` rather than at a helper they have not seen yet.
-hint() {
-    if [ "${PKG_VIA_MAKE:-0}" = "1" ]; then
-        note "next: $1"
-    else
-        note "next: $2"
-    fi
-}
-
-usage() {
-    cat >&2 <<USAGE
-usage:
-  pkg new NAME [options]      Create a package in ${WORKSPACE}/src
-      --python                ament_python package (default: ament_cmake)
-      --template pubsub|param Start from working code instead of an empty package
-      --interfaces            A .msg/.srv interface package, correctly wired
-      --deps "a b c"          Extra dependencies
-      --license NAME          Default: Apache-2.0
-      --build                 Build it after creating
-
-  pkg build [NAME...]         colcon build (all packages, or the named ones)
-  pkg test [NAME...]          colcon test AND report results (see note below)
-  pkg run NAME EXECUTABLE     ros2 run, in the foreground; Ctrl-C stops it
-  pkg list                    Packages in this workspace
-
-Examples:
-  pkg new my_bot --template pubsub --build
-  pkg new my_bot_py --python --template param
-  pkg new my_bot_msgs --interfaces --build
-USAGE
-    exit 2
-}
-
-# `ros2 pkg create` warns when these are unset; take them from git when it knows.
-default_maintainer_name() {
-    git config --global user.name 2>/dev/null || echo 'ROS Developer'
-}
-default_maintainer_email() {
-    git config --global user.email 2>/dev/null || echo 'dev@example.com'
-}
-
-# Insert text into CMakeLists.txt just before ament_package(), which is where
-# ament requires targets and install rules to be declared.
-cmake_insert() {
-    CMAKE_FILE="$1" CMAKE_BLOCK="$2" python3 - <<'PY'
-import os
-
-path = os.environ['CMAKE_FILE']
-block = os.environ['CMAKE_BLOCK']
-text = open(path).read()
-marker = 'ament_package()'
-if marker not in text:
-    raise SystemExit(f'{path}: no ament_package() call to insert before')
-text = text.replace(marker, block.rstrip() + '\n\n' + marker, 1)
-open(path, 'w').write(text)
-PY
-}
-
-# Insert dependency elements into package.xml, just before <export> when it
-# is present.  The package_format3 schema requires <export> to be the LAST
-# child of <package>: `ros2 pkg create` always emits one (for build_type), so
-# inserting after </package> instead would leave buildtool_depend/depend/
-# exec_depend elements trailing the export block, which xmllint rejects.
-xml_insert() {
-    XML_FILE="$1" XML_BLOCK="$2" python3 - <<'PY'
-import os
-
-path = os.environ['XML_FILE']
-block = os.environ['XML_BLOCK']
-text = open(path).read()
-marker = '<export>' if '<export>' in text else '</package>'
-if marker not in text:
-    raise SystemExit(f'{path}: no {marker} element')
-text = text.replace(marker, block.rstrip() + '\n\n' + marker, 1)
-open(path, 'w').write(text)
-PY
-}
-
-# Add console_scripts entries and install the launch directory in setup.py.
-setup_py_patch() {
-    SETUP_FILE="$1" SETUP_PKG="$2" SETUP_NODES="$3" SETUP_LAUNCH="$4" python3 - <<'PY'
+import enum
 import os
 import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Optional, Sequence, Tuple
 
-path = os.environ['SETUP_FILE']
-pkg = os.environ['SETUP_PKG']
-nodes = [n for n in os.environ['SETUP_NODES'].split() if n]
-want_launch = os.environ['SETUP_LAUNCH'] == '1'
-text = open(path).read()
 
-entries = ',\n'.join(f"            '{n} = {pkg}.{n}:main'" for n in nodes)
-pattern = re.compile(r"('console_scripts':\s*\[)(\s*)(\])")
-if not pattern.search(text):
-    raise SystemExit(f'{path}: could not find an empty console_scripts list')
-text = pattern.sub(lambda m: f"{m.group(1)}\n{entries},\n        {m.group(3)}", text, count=1)
+class BuildType(enum.Enum):
+    """The closed set of ament build types (guardrail 1)."""
 
-if want_launch:
-    anchor = "data_files=["
-    if anchor not in text:
-        raise SystemExit(f'{path}: could not find data_files')
-    addition = (
-        "data_files=[\n"
-        "        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),"
+    CMAKE = "ament_cmake"
+    PYTHON = "ament_python"
+
+
+class Template(enum.Enum):
+    """The closed set of starting-point templates (guardrail 1)."""
+
+    PUBSUB = "pubsub"
+    PARAM = "param"
+
+
+class Command(enum.Enum):
+    """The closed set of subcommands (guardrail 1)."""
+
+    NEW = "new"
+    BUILD = "build"
+    TEST = "test"
+    RUN = "run"
+    LIST = "list"
+
+
+class Usage(Exception):
+    """A usage error: print the usage block and exit 2."""
+
+
+class Refused(Exception):
+    """An expected refusal: print the message and exit 1 (guardrail 3)."""
+
+
+# --- Environment -----------------------------------------------------------
+
+
+def workspace() -> Path:
+    return Path(os.environ.get("WORKSPACE") or "/workspace")
+
+
+def templates_root() -> Path:
+    return Path(
+        os.environ.get("ROS_WORKSTATION_TEMPLATES")
+        or "/usr/share/ros-workstation/templates"
     )
-    text = text.replace(anchor, addition, 1)
-    if 'from glob import glob' not in text:
-        # flake8-import-order (I201) wants a blank line between the stdlib
-        # group and the third-party group that follows.
-        text = 'from glob import glob\n\n' + text
 
-open(path, 'w').write(text)
-PY
-}
 
-# Copy a template tree in, substituting the package name.
-apply_template() {
-    src="$1" dest="$2" name="$3"
-    (cd "${src}" && find . -type f -print0) | while IFS= read -r -d '' relative; do
-        target="${dest}/${relative#./}"
-        mkdir -p "$(dirname "${target}")"
-        sed "s/@PKG@/${name}/g" "${src}/${relative#./}" > "${target}"
-    done
-}
+# --- Output ----------------------------------------------------------------
 
-cmd_new() {
-    [ "$#" -ge 1 ] || usage
-    local name="$1"; shift
-    local build_type='ament_cmake' template='' interfaces=0 extra_deps='' license='Apache-2.0' do_build=0
 
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --python) build_type='ament_python'; shift ;;
-            --cmake) build_type='ament_cmake'; shift ;;
-            --template) template="${2:?--template needs pubsub or param}"; shift 2 ;;
-            --interfaces) interfaces=1; shift ;;
-            --deps) extra_deps="${2:?--deps needs a list}"; shift 2 ;;
-            --license) license="${2:?--license needs a name}"; shift 2 ;;
-            --build) do_build=1; shift ;;
-            *) note "unknown option: $1"; usage ;;
-        esac
-    done
+def quote(argv: Sequence[str]) -> str:
+    """Print a command so it can be pasted back into a shell and run as-is.
+    Plain words stay bare for readability; anything else is single-quoted.
+    Printing ' '.join(argv) instead would show `--maintainer-name ROS
+    Developer`, which re-parses as two arguments -- and a pasteable command is
+    the whole point of printing it."""
+    return shlex.join(argv)
 
-    case "${template}" in
-        ''|pubsub|param) ;;
-        *) note "unknown template: ${template}"; usage ;;
-    esac
 
-    if [ "${interfaces}" -eq 1 ]; then
-        if [ "${build_type}" = 'ament_python' ]; then
-            note 'interface packages must be ament_cmake; rosidl does not generate from ament_python'
-            exit 1
-        fi
-        if [ -n "${template}" ]; then
-            note '--interfaces and --template are separate package kinds; pick one'
-            exit 1
-        fi
-    fi
+def note(message: str = "") -> None:
+    print(message, file=sys.stderr, flush=True)
 
-    local -a deps=()
-    if [ "${interfaces}" -eq 1 ]; then
+
+def echo(argv: Sequence[str]) -> None:
+    print("+ {}".format(quote(argv)), file=sys.stderr, flush=True)
+
+
+def hint(via_make: str, direct: str) -> None:
+    """The Makefile sets PKG_VIA_MAKE=1, so a student who typed `make package`
+    is pointed at `make build` rather than at a helper they have not seen
+    yet."""
+    if os.environ.get("PKG_VIA_MAKE", "0") == "1":
+        note("next: {}".format(via_make))
+    else:
+        note("next: {}".format(direct))
+
+
+def usage() -> str:
+    return (
+        "usage:\n"
+        "  pkg new NAME [options]      Create a package in {ws}/src\n"
+        "      --python                ament_python package (default:"
+        " ament_cmake)\n"
+        "      --template pubsub|param Start from working code instead of an"
+        " empty package\n"
+        "      --interfaces            A .msg/.srv interface package,"
+        " correctly wired\n"
+        '      --deps "a b c"          Extra dependencies\n'
+        "      --license NAME          Default: Apache-2.0\n"
+        "      --build                 Build it after creating\n"
+        "\n"
+        "  pkg build [NAME...]         colcon build (all packages, or the"
+        " named ones)\n"
+        "  pkg test [NAME...]          colcon test AND report results (see"
+        " note below)\n"
+        "  pkg run NAME EXECUTABLE     ros2 run, in the foreground; Ctrl-C"
+        " stops it\n"
+        "  pkg list                    Packages in this workspace\n"
+        "\n"
+        "Examples:\n"
+        "  pkg new my_bot --template pubsub --build\n"
+        "  pkg new my_bot_py --python --template param\n"
+        "  pkg new my_bot_msgs --interfaces --build".format(ws=workspace())
+    )
+
+
+# --- Running commands ------------------------------------------------------
+
+
+def spawn(argv: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
+    """The single place a subprocess is created.  Always an argv list, never a
+    shell string, and no shell is interposed (guardrail 4)."""
+    try:
+        return subprocess.run(list(argv), **kwargs)
+    except OSError:
+        raise Refused("{}: command not found".format(argv[0]), 127)
+
+
+def run(argv: Sequence[str]) -> int:
+    """Echo an argv list to stderr, then run it, returning its status."""
+    argv = list(argv)
+    echo(argv)
+    return spawn(argv).returncode
+
+
+def run_checked(argv: Sequence[str]) -> None:
+    """Echo and run; a non-zero status ends the script with that status, the
+    way `set -e` did."""
+    status = run(argv)
+    if status != 0:
+        raise SystemExit(status)
+
+
+# --- Pure helpers ----------------------------------------------------------
+
+
+def cmake_insert(text: str, block: str, path: Path) -> str:
+    """Insert text into CMakeLists.txt just before ament_package(), which is
+    where ament requires targets and install rules to be declared."""
+    marker = "ament_package()"
+    if marker not in text:
+        raise Refused(
+            "{}: no ament_package() call to insert before".format(path)
+        )
+    return text.replace(marker, block.rstrip() + "\n\n" + marker, 1)
+
+
+def xml_insert(text: str, block: str, path: Path) -> str:
+    """Insert dependency elements into package.xml, just before <export> when
+    it is present.  The package_format3 schema requires <export> to be the
+    LAST child of <package>: `ros2 pkg create` always emits one (for
+    build_type), so inserting after </package> instead would leave
+    buildtool_depend/depend/exec_depend elements trailing the export block,
+    which xmllint rejects."""
+    marker = "<export>" if "<export>" in text else "</package>"
+    if marker not in text:
+        raise Refused("{}: no {} element".format(path, marker))
+    return text.replace(marker, block.rstrip() + "\n\n" + marker, 1)
+
+
+CONSOLE_SCRIPTS = re.compile(r"('console_scripts':\s*\[)(\s*)(\])")
+
+
+def setup_py_patch(
+    text: str, pkg: str, nodes: Sequence[str], want_launch: bool, path: Path
+) -> str:
+    """Add console_scripts entries and install the launch directory in
+    setup.py."""
+    entries = ",\n".join(
+        "            '{n} = {pkg}.{n}:main'".format(n=n, pkg=pkg)
+        for n in nodes
+    )
+    if not CONSOLE_SCRIPTS.search(text):
+        raise Refused(
+            "{}: could not find an empty console_scripts list".format(path)
+        )
+    text = CONSOLE_SCRIPTS.sub(
+        lambda m: "{}\n{},\n        {}".format(m.group(1), entries, m.group(3)),
+        text,
+        count=1,
+    )
+
+    if want_launch:
+        anchor = "data_files=["
+        if anchor not in text:
+            raise Refused("{}: could not find data_files".format(path))
+        addition = (
+            "data_files=[\n"
+            "        ('share/' + package_name + '/launch',"
+            " glob('launch/*.launch.py')),"
+        )
+        text = text.replace(anchor, addition, 1)
+        if "from glob import glob" not in text:
+            # flake8-import-order (I201) wants a blank line between the stdlib
+            # group and the third-party group that follows.
+            text = "from glob import glob\n\n" + text
+    return text
+
+
+def substitute(text: str, name: str) -> str:
+    """Pure: the template substitution the shell version did with sed."""
+    return text.replace("@PKG@", name)
+
+
+# --- File I/O at the edges -------------------------------------------------
+
+
+def patch_file(path: Path, transform) -> None:
+    """Read, transform with a pure function, write back."""
+    path.write_text(transform(path.read_text()))
+
+
+def apply_template(src: Path, dest: Path, name: str) -> None:
+    """Copy a template tree in, substituting the package name."""
+    if not src.is_dir():
+        raise Refused("{}: no such template directory".format(src))
+    for source in sorted(p for p in src.rglob("*") if p.is_file()):
+        target = dest / source.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(substitute(source.read_text(), name))
+
+
+def git_config(key: str, fallback: str) -> str:
+    """`ros2 pkg create` warns when these are unset; take them from git when
+    it knows."""
+    try:
+        result = subprocess.run(
+            ["git", "config", "--global", key],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return fallback
+    if result.returncode != 0:
+        return fallback
+    # $(...) strips trailing newlines and nothing else.
+    return result.stdout.decode("utf-8", "replace").rstrip("\n")
+
+
+def init_workspace() -> None:
+    """Run for its effect, not its narration: the shell version redirected
+    stdout to /dev/null and did not echo the command."""
+    result = spawn(["init-workspace"], stdout=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+
+
+# --- Parsing (once, at the entry point) ------------------------------------
+
+
+class NewOptions:
+    """The parsed, typed result of `pkg new` arguments (guardrail 6)."""
+
+    def __init__(self, name, build_type, template, interfaces, deps,
+                 license_name, do_build):
+        self.name = name
+        self.build_type = build_type
+        self.template = template
+        self.interfaces = interfaces
+        self.deps = deps
+        self.license_name = license_name
+        self.do_build = do_build
+
+
+def option_value(args: List[str], index: int, message: str) -> str:
+    """The shell version used ${2:?message}, which prints the message and
+    exits 1.  Same message, same status."""
+    if index >= len(args) or args[index] == "":
+        raise Refused(message)
+    return args[index]
+
+
+def parse_new(args: List[str]) -> NewOptions:
+    if not args:
+        raise Usage()
+    name = args[0]
+    rest = args[1:]
+
+    build_type = BuildType.CMAKE
+    template_name = ""
+    interfaces = False
+    extra_deps = ""
+    license_name = "Apache-2.0"
+    do_build = False
+
+    i = 0
+    while i < len(rest):
+        option = rest[i]
+        if option == "--python":
+            build_type = BuildType.PYTHON
+            i += 1
+        elif option == "--cmake":
+            build_type = BuildType.CMAKE
+            i += 1
+        elif option == "--template":
+            template_name = option_value(
+                rest, i + 1, "--template needs pubsub or param"
+            )
+            i += 2
+        elif option == "--interfaces":
+            interfaces = True
+            i += 1
+        elif option == "--deps":
+            extra_deps = option_value(rest, i + 1, "--deps needs a list")
+            i += 2
+        elif option == "--license":
+            license_name = option_value(rest, i + 1, "--license needs a name")
+            i += 2
+        elif option == "--build":
+            do_build = True
+            i += 1
+        else:
+            note("unknown option: {}".format(option))
+            raise Usage()
+
+    template = None  # type: Optional[Template]
+    if template_name:
+        try:
+            template = Template(template_name)
+        except ValueError:
+            note("unknown template: {}".format(template_name))
+            raise Usage()
+
+    if interfaces:
+        if build_type is BuildType.PYTHON:
+            raise Refused(
+                "interface packages must be ament_cmake; rosidl does not"
+                " generate from ament_python"
+            )
+        if template is not None:
+            raise Refused(
+                "--interfaces and --template are separate package kinds;"
+                " pick one"
+            )
+
+    deps = []  # type: List[str]
+    if interfaces:
         # xml_insert (below) adds the precise buildtool_depend/depend/
         # exec_depend split that rosidl actually needs. Also passing these
         # through `ros2 pkg create --dependencies` would add generic
         # <depend> elements for the same packages, and catkin_pkg's linter
         # rejects a package.xml with both a generic and a specific
         # dependency on the same package as redundant.
-        :
-    elif [ -n "${template}" ]; then
-        if [ "${build_type}" = 'ament_python' ]; then
-            deps=(rclpy std_msgs)
-        else
-            deps=(rclcpp std_msgs)
-        fi
-    fi
-    # shellcheck disable=SC2206
-    [ -n "${extra_deps}" ] && deps+=(${extra_deps})
+        pass
+    elif template is not None:
+        if build_type is BuildType.PYTHON:
+            deps = ["rclpy", "std_msgs"]
+        else:
+            deps = ["rclcpp", "std_msgs"]
+    deps += extra_deps.split()
 
-    init-workspace >/dev/null
+    return NewOptions(
+        name, build_type, template, interfaces, deps, license_name, do_build
+    )
 
-    local -a create=(ros2 pkg create "${name}"
-        --build-type "${build_type}"
-        --license "${license}"
-        --destination-directory "${WORKSPACE}/src"
-        --maintainer-name "$(default_maintainer_name)"
-        --maintainer-email "$(default_maintainer_email)")
-    [ "${#deps[@]}" -gt 0 ] && create+=(--dependencies "${deps[@]}")
 
-    run "${create[@]}"
+# --- Template blocks -------------------------------------------------------
 
-    local dir="${WORKSPACE}/src/${name}"
-
-    if [ "${interfaces}" -eq 1 ]; then
-        note ''
-        note 'Wiring the interface package (this is the part that is easy to get wrong):'
-        apply_template "${TEMPLATES}/interfaces" "${dir}" "${name}"
-        cmake_insert "${dir}/CMakeLists.txt" 'find_package(rosidl_default_generators REQUIRED)
+INTERFACES_CMAKE = """find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Temperature.msg"
   "srv/AddTwoInts.srv"
   DEPENDENCIES builtin_interfaces
-)'
-        xml_insert "${dir}/package.xml" '  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+)"""
+
+INTERFACES_XML = """  <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <depend>builtin_interfaces</depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>'
-        note "  + msg/Temperature.msg and srv/AddTwoInts.srv"
-        note "  + rosidl_generate_interfaces() in CMakeLists.txt"
-        note "  + rosidl_default_generators / rosidl_default_runtime and the"
-        note "    rosidl_interface_packages group membership in package.xml"
-    elif [ -n "${template}" ] && [ "${build_type}" = 'ament_cmake' ]; then
-        apply_template "${TEMPLATES}/cpp/${template}" "${dir}" "${name}"
-        if [ "${template}" = 'pubsub' ]; then
-            cmake_insert "${dir}/CMakeLists.txt" 'add_executable(talker src/talker.cpp)
+  <member_of_group>rosidl_interface_packages</member_of_group>"""
+
+PUBSUB_CMAKE = """add_executable(talker src/talker.cpp)
 target_link_libraries(talker rclcpp::rclcpp ${std_msgs_TARGETS})
 
 add_executable(listener src/listener.cpp)
 target_link_libraries(listener rclcpp::rclcpp ${std_msgs_TARGETS})
 
 install(TARGETS talker listener DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})'
-        else
-            cmake_insert "${dir}/CMakeLists.txt" 'add_executable(param_node src/param_node.cpp)
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})"""
+
+PARAM_CMAKE = """add_executable(param_node src/param_node.cpp)
 target_link_libraries(param_node rclcpp::rclcpp)
 
-install(TARGETS param_node DESTINATION lib/${PROJECT_NAME})'
-        fi
-    elif [ -n "${template}" ]; then
+install(TARGETS param_node DESTINATION lib/${PROJECT_NAME})"""
+
+
+def python_nodes(template: Template) -> Tuple[List[str], bool]:
+    """Pure: the node modules a Python template ships, and whether it has a
+    launch directory."""
+    if template is Template.PUBSUB:
+        return ["talker", "listener"], True
+    return ["param_node"], False
+
+
+# --- Subcommands -----------------------------------------------------------
+
+
+def cmd_new(args: List[str]) -> int:
+    options = parse_new(args)
+    ws = workspace()
+    templates = templates_root()
+
+    init_workspace()
+
+    create = [
+        "ros2", "pkg", "create", options.name,
+        "--build-type", options.build_type.value,
+        "--license", options.license_name,
+        "--destination-directory", str(ws / "src"),
+        "--maintainer-name", git_config("user.name", "ROS Developer"),
+        "--maintainer-email", git_config("user.email", "dev@example.com"),
+    ]
+    if options.deps:
+        create += ["--dependencies"] + options.deps
+
+    # `pkg new` on an existing package is refused by `ros2 pkg create` itself,
+    # with its own message and status.  Nothing here checks first.
+    run_checked(create)
+
+    directory = ws / "src" / options.name
+
+    if options.interfaces:
+        note("")
+        note(
+            "Wiring the interface package (this is the part that is easy to"
+            " get wrong):"
+        )
+        apply_template(templates / "interfaces", directory, options.name)
+        cmake = directory / "CMakeLists.txt"
+        patch_file(
+            cmake, lambda t: cmake_insert(t, INTERFACES_CMAKE, cmake)
+        )
+        xml = directory / "package.xml"
+        patch_file(xml, lambda t: xml_insert(t, INTERFACES_XML, xml))
+        note("  + msg/Temperature.msg and srv/AddTwoInts.srv")
+        note("  + rosidl_generate_interfaces() in CMakeLists.txt")
+        note("  + rosidl_default_generators / rosidl_default_runtime and the")
+        note("    rosidl_interface_packages group membership in package.xml")
+    elif (
+        options.template is not None
+        and options.build_type is BuildType.CMAKE
+    ):
+        apply_template(
+            templates / "cpp" / options.template.value,
+            directory,
+            options.name,
+        )
+        block = (
+            PUBSUB_CMAKE
+            if options.template is Template.PUBSUB
+            else PARAM_CMAKE
+        )
+        cmake = directory / "CMakeLists.txt"
+        patch_file(cmake, lambda t: cmake_insert(t, block, cmake))
+    elif options.template is not None:
         # ament_python: node modules live inside the package directory.
-        local nodes launch=0
-        if [ "${template}" = 'pubsub' ]; then
-            nodes='talker listener'
-            launch=1
-        else
-            nodes='param_node'
-        fi
-        for node in ${nodes}; do
-            sed "s/@PKG@/${name}/g" \
-                "${TEMPLATES}/py/${template}/nodes/${node}.py" > "${dir}/${name}/${node}.py"
-        done
-        if [ "${launch}" -eq 1 ]; then
-            mkdir -p "${dir}/launch"
-            sed "s/@PKG@/${name}/g" \
-                "${TEMPLATES}/py/${template}/launch/demo.launch.py" > "${dir}/launch/demo.launch.py"
-        fi
-        setup_py_patch "${dir}/setup.py" "${name}" "${nodes}" "${launch}"
-    fi
+        nodes, launch = python_nodes(options.template)
+        source_root = templates / "py" / options.template.value
+        for node in nodes:
+            source = source_root / "nodes" / "{}.py".format(node)
+            target = directory / options.name / "{}.py".format(node)
+            target.write_text(
+                substitute(source.read_text(), options.name)
+            )
+        if launch:
+            (directory / "launch").mkdir(parents=True, exist_ok=True)
+            source = source_root / "launch" / "demo.launch.py"
+            (directory / "launch" / "demo.launch.py").write_text(
+                substitute(source.read_text(), options.name)
+            )
+        setup = directory / "setup.py"
+        patch_file(
+            setup,
+            lambda t: setup_py_patch(
+                t, options.name, nodes, launch, setup
+            ),
+        )
 
-    note ''
-    note "created ${dir}"
-    if [ "${do_build}" -eq 1 ]; then
-        cmd_build "${name}"
-    else
-        hint "make build PKG=${name}" "pkg build ${name}"
-    fi
-}
+    note("")
+    note("created {}".format(directory))
+    if options.do_build:
+        return cmd_build([options.name])
+    hint(
+        "make build PKG={}".format(options.name),
+        "pkg build {}".format(options.name),
+    )
+    return 0
 
-cmd_build() {
-    cd "${WORKSPACE}"
-    if [ "$#" -gt 0 ]; then
-        run colcon build --symlink-install --packages-select "$@"
-    else
-        run colcon build --symlink-install
-    fi
-    note ''
-    note "built; open a new shell, or: source ${WORKSPACE}/install/setup.bash"
-    if [ "$#" -eq 1 ]; then
-        # This shell predates the build, so it cannot see the new package
-        # until the overlay is sourced.  ROS setup scripts read unset
-        # variables, hence the brief set +u.
-        set +u
-        # shellcheck disable=SC1091
-        . "${WORKSPACE}/install/setup.bash"
-        set -u
-        note "executables in $1:"
-        ros2 pkg executables "$1" 2>/dev/null | sed 's/^/  /' >&2 || true
-        hint "make run PKG=$1 NODE=<executable>" "pkg run $1 <executable>"
-    fi
-}
 
-cmd_test() {
-    cd "${WORKSPACE}"
-    local -a select=()
-    [ "$#" -gt 0 ] && select=(--packages-select "$@")
+def list_executables(ws: Path, package: str) -> None:
+    """This shell predates the build, so it cannot see the new package until
+    the overlay is sourced.  Python cannot source a shell file, so the one
+    listing runs through bash -- still an argv list, with the paths passed as
+    arguments rather than interpolated into the script text."""
+    setup = ws / "install" / "setup.bash"
+    script = 'set +u; . "$1" >/dev/null 2>&1; exec ros2 pkg executables "$2"'
+    try:
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", str(setup), package],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return
+    if result.returncode != 0:
+        return
+    text = result.stdout.decode("utf-8", "replace")
+    for line in text.splitlines():
+        note("  {}".format(line))
+
+
+def cmd_build(args: List[str]) -> int:
+    ws = workspace()
+    try:
+        os.chdir(ws)
+    except OSError as err:
+        raise Refused("pkg: {}".format(err))
+
+    argv = ["colcon", "build", "--symlink-install"]
+    if args:
+        argv += ["--packages-select"] + args
+    run_checked(argv)
+
+    note("")
+    note(
+        "built; open a new shell, or: source {}/install/setup.bash".format(ws)
+    )
+    if len(args) == 1:
+        note("executables in {}:".format(args[0]))
+        list_executables(ws, args[0])
+        hint(
+            "make run PKG={} NODE=<executable>".format(args[0]),
+            "pkg run {} <executable>".format(args[0]),
+        )
+    return 0
+
+
+def cmd_test(args: List[str]) -> int:
+    ws = workspace()
+    try:
+        os.chdir(ws)
+    except OSError as err:
+        raise Refused("pkg: {}".format(err))
+
+    select = ["--packages-select"] + args if args else []
 
     # `colcon test` exits 0 even when tests fail; `colcon test-result` is what
     # actually reports failures.  Running both is why this subcommand exists.
-    run colcon test "${select[@]}" || true
-    note ''
-    note 'colcon test always exits 0; the real verdict comes from test-result:'
-    run colcon test-result --verbose
+    run(["colcon", "test"] + select)
+    note("")
+    note("colcon test always exits 0; the real verdict comes from test-result:")
+    if not args:
+        return run(["colcon", "test-result", "--verbose"])
+    # Read the verdict of the packages that were tested, and only those.
+    # Without --test-result-base, test-result reports every result recorded in
+    # the workspace, so testing package A would show -- and exit with -- stale
+    # failures left behind by package B.
+    worst = 0
+    for package in args:
+        status = run(["colcon", "test-result", "--verbose",
+                      "--test-result-base", str(ws / "build" / package)])
+        worst = max(worst, status)
+    return worst
+
+
+def cmd_run(args: List[str]) -> int:
+    if len(args) < 2:
+        raise Refused("usage: pkg run NAME EXECUTABLE [ARGS...]", 2)
+    argv = ["ros2", "run"] + args
+    echo(argv)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        # Replace this process so Ctrl-C and the exit status reach ros2.
+        os.execvp(argv[0], argv)
+    except OSError:
+        raise Refused("{}: command not found".format(argv[0]), 127)
+    return 0  # unreachable
+
+
+def cmd_list(args: List[str]) -> int:
+    ws = workspace()
+    try:
+        os.chdir(ws)
+    except OSError as err:
+        raise Refused("pkg: {}".format(err))
+    return run(["colcon", "list", "--names-only"])
+
+
+HANDLERS = {
+    Command.NEW: cmd_new,
+    Command.BUILD: cmd_build,
+    Command.TEST: cmd_test,
+    Command.RUN: cmd_run,
+    Command.LIST: cmd_list,
 }
 
-cmd_run() {
-    [ "$#" -ge 2 ] || { note 'usage: pkg run NAME EXECUTABLE [ARGS...]'; exit 2; }
-    printf '+ %s\n' "$(shell_quote ros2 run "$@")" >&2
-    exec ros2 run "$@"
-}
 
-cmd_list() {
-    cd "${WORKSPACE}"
-    run colcon list --names-only
-}
+def main(argv: List[str]) -> int:
+    if not argv:
+        raise Usage()
+    try:
+        command = Command(argv[0])
+    except ValueError:
+        raise Usage()
+    return HANDLERS[command](argv[1:])
 
-[ "$#" -ge 1 ] || usage
-command="$1"; shift
-case "${command}" in
-    new)   cmd_new "$@" ;;
-    build) cmd_build "$@" ;;
-    test)  cmd_test "$@" ;;
-    run)   cmd_run "$@" ;;
-    list)  cmd_list "$@" ;;
-    *)     usage ;;
-esac
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Usage:
+        print(usage(), file=sys.stderr)
+        sys.exit(2)
+    except Refused as err:
+        status = err.args[1] if len(err.args) > 1 else 1
+        print(err.args[0], file=sys.stderr)
+        sys.exit(status)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(141)

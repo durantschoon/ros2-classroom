@@ -43,6 +43,10 @@ make run PKG=my_robot NODE=talker           # Ctrl-C to stop
 make test PKG=my_robot
 ```
 
+Several targets explain themselves: `make shell help`, `make package examples`,
+and likewise for `build`, `run`, and `test`. `make help` shows those targets in
+bold. The examples are real ROS commands, each one run against this image.
+
 Each prints the real command before running it, so you can see what you would
 have typed on a native ROS install — see
 [docs/creating-packages.md](docs/creating-packages.md).
@@ -70,6 +74,8 @@ docker compose up -d
 | `make up` | Start the browser desktop |
 | `make open` | Open, or print, the desktop URL |
 | `make shell` | A sourced ROS shell in a throwaway container |
+| `make <target> help` | What `shell`, `package`, `build`, `run` or `test` does, its options, what it runs |
+| `make <target> examples` | Things to try with that target, ready to copy |
 | `make turtlesim` | Launch turtlesim on the running desktop |
 | `make turtlesim-teleop` | Drive turtlesim with the arrow keys (turtlesim only) |
 | `make logs` | Follow container logs |
@@ -80,7 +86,8 @@ docker compose up -d
 | `make build [PKG=name]` | `colcon build` your packages |
 | `make run PKG=name NODE=exe` | `ros2 run` a node in the foreground |
 | `make test [PKG=name]` | Run your packages' tests and report the real verdict |
-| `make lint` | Validate the compose file and shell scripts |
+| `make check` | Fast tests for the host scripts (seconds, no containers) |
+| `make lint` | Validate compose.yaml and lint every script (shellcheck, Python 3.9) |
 | `make digest` | Print the base-image digest to pin in `.env` |
 | `make engine` | Show which container engine was detected |
 | `make doctor` | Check host prerequisites and how to fix them |

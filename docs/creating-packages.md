@@ -24,6 +24,10 @@ own computer rather than inside the desktop:
 | `make run PKG=name NODE=executable` | `pkg run name executable` → `ros2 run` |
 | `make test [PKG=name]` | `pkg test [name]` → `colcon test` + `colcon test-result` |
 
+Each of those targets documents itself: `make package help` lists every option,
+and `make package examples` gives complete sequences to copy. The same works
+for `build`, `run`, `test`, and `shell`.
+
 Either way, every underlying `ros2` and `colcon` command is printed before it
 runs, quoted so you can paste it back into a shell. That is deliberate: these are
 the commands you would type on a native ROS install, and the helpers are meant

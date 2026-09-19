@@ -33,9 +33,23 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # One apt layer: ROS tutorial tools, a build toolchain, and a minimal desktop
 # (Xvfb, Openbox, x11vnc, noVNC).  A full Ubuntu desktop is deliberately avoided.
+#
+# The upgrade is not optional.  The base image is pinned by digest, but the ROS
+# apt repository moves: after a ROS sync it serves packages rebuilt against
+# newer core libraries than the pinned base contains.  ROS packages depend on
+# each other by name, not by version, so apt installs the new turtlesim on top
+# of the old rosidl typesupport without complaint, and turtlesim_node then dies
+# at start with "undefined symbol".  Upgrading first brings the base's ROS
+# packages to the same sync as everything installed after it.
+#
+# The package lists are left unquoted on purpose: EXTRA_ROS_PACKAGES and
+# EXTRA_APT_PACKAGES are space-separated, and word splitting is how they become
+# separate arguments.
+# hadolint ignore=SC2086
 RUN extra_ros="" \
     && for pkg in ${EXTRA_ROS_PACKAGES}; do extra_ros="${extra_ros} ros-${ROS_DISTRO}-${pkg}"; done \
     && apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
     && apt-get install --yes --no-install-recommends \
         ros-${ROS_DISTRO}-turtlesim \
         ros-${ROS_DISTRO}-rviz2 \
@@ -89,6 +103,10 @@ RUN existing_user="$(getent passwd ${USER_UID} | cut -d: -f1)" \
 
 # Every interactive bash session gets the same ROS environment, without editing
 # a mutable per-user .bashrc that a home volume would then pin forever.
+#
+# The single quotes are on purpose: these lines are written into bash.bashrc
+# literally, to be expanded by the shells that source it, not at build time.
+# hadolint ignore=SC2016
 RUN mkdir -p /etc/bash.bashrc.d \
     && printf '%s\n' \
         '' \

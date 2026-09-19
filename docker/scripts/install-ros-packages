@@ -1,51 +1,132 @@
-#!/bin/bash
-# Install extra packages into the RUNNING container.
-#
-# Short names are expanded to ros-${ROS_DISTRO}-<name>; anything containing a
-# slash-free full Debian name that already exists is installed as given.
-# Missing packages are an error, never a silent skip.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Install extra packages into the RUNNING container.
 
-if [ "$#" -eq 0 ]; then
-    cat >&2 <<USAGE
-usage: install-ros-packages PACKAGE [PACKAGE...]
+Short names are expanded to ros-${ROS_DISTRO}-<name>; anything containing a
+slash-free full Debian name that already exists is installed as given.
+Missing packages are an error, never a silent skip.
+"""
 
-  install-ros-packages demo-nodes-cpp image-tools   # ROS short names
-  install-ros-packages ros-${ROS_DISTRO:-lyrical}-rqt-graph        # full Debian name
-  install-ros-packages python3-pytest               # plain Ubuntu package
-USAGE
-    exit 2
-fi
+import os
+import subprocess
+import sys
+from typing import List, Sequence
 
-if [ -z "${ROS_DISTRO:-}" ]; then
-    echo "ROS_DISTRO is not set; this script must run inside the workstation image" >&2
-    exit 1
-fi
+# Prefixes that are already full Debian package names, so they are never
+# rewritten into a ros-<distro>-... candidate.
+LITERAL_PREFIXES = ("ros-", "python3-", "lib")
 
-sudo apt-get update
-
-resolved=()
-for name in "$@"; do
-    candidate="ros-${ROS_DISTRO}-${name//_/-}"
-    if [[ "${name}" == ros-* || "${name}" == python3-* || "${name}" == lib* ]]; then
-        candidate="${name}"
-    elif ! apt-cache show "${candidate}" >/dev/null 2>&1; then
-        # Not a ROS package name; fall back to the literal name and let apt
-        # report the failure if that does not exist either.
-        candidate="${name}"
-    fi
-    resolved+=("${candidate}")
-done
-
-printf 'installing: %s\n' "${resolved[*]}"
-sudo apt-get install --yes --no-install-recommends "${resolved[@]}"
-
-cat <<'NOTE'
-
+NOTE = """
 These packages live in the container's writable layer.  They survive `stop`
 and `start`, but a container recreation (`docker compose up --force-recreate`,
 `down`, or an image rebuild) discards them.
 
 To keep them permanently, add them to EXTRA_ROS_PACKAGES / EXTRA_APT_PACKAGES
 in .env and run `make image` again.  See docs/package-management.md.
-NOTE
+"""
+
+
+def usage(distro: str) -> int:
+    print(
+        "usage: install-ros-packages PACKAGE [PACKAGE...]\n"
+        "\n"
+        "  install-ros-packages demo-nodes-cpp image-tools   # ROS short names\n"
+        "  install-ros-packages ros-{}-rqt-graph        # full Debian name\n"
+        "  install-ros-packages python3-pytest               # plain Ubuntu"
+        " package".format(distro),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def ros_candidate(distro: str, name: str) -> str:
+    """Pure: the ros-<distro>-... name a short name would expand to."""
+    return "ros-{}-{}".format(distro, name.replace("_", "-"))
+
+
+def is_literal(name: str) -> bool:
+    """Pure: True when the name is already a full Debian package name."""
+    return name.startswith(LITERAL_PREFIXES)
+
+
+def apt_knows(candidate: str) -> bool:
+    """`apt-cache show NAME` succeeds only for a package apt has heard of."""
+    try:
+        result = subprocess.run(
+            ["apt-cache", "show", candidate],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        # No apt-cache at all: treat every short name as unknown, exactly as
+        # the shell version's failed command did.
+        return False
+    return result.returncode == 0
+
+
+def resolve(distro: str, names: Sequence[str]) -> List[str]:
+    """Each name as apt should see it.  Impure only through apt_knows()."""
+    resolved = []
+    for name in names:
+        if is_literal(name):
+            resolved.append(name)
+            continue
+        candidate = ros_candidate(distro, name)
+        # Not a ROS package name; fall back to the literal name and let apt
+        # report the failure if that does not exist either.
+        resolved.append(candidate if apt_knows(candidate) else name)
+    return resolved
+
+
+def run(argv: Sequence[str]) -> int:
+    """Run a command, returning its status.  A missing binary is an explicit
+    error, never a traceback (guardrail 3)."""
+    try:
+        return subprocess.run(list(argv)).returncode
+    except OSError:
+        print(
+            "{}: command not found".format(argv[0]),
+            file=sys.stderr,
+        )
+        return 127
+
+
+def main(argv: List[str]) -> int:
+    if not argv:
+        return usage(os.environ.get("ROS_DISTRO") or "lyrical")
+
+    distro = os.environ.get("ROS_DISTRO") or ""
+    if not distro:
+        print(
+            "ROS_DISTRO is not set; this script must run inside the"
+            " workstation image",
+            file=sys.stderr,
+        )
+        return 1
+
+    status = run(["sudo", "apt-get", "update"])
+    if status != 0:
+        return status
+
+    resolved = resolve(distro, argv)
+    print("installing: {}".format(" ".join(resolved)))
+    sys.stdout.flush()
+
+    status = run(
+        ["sudo", "apt-get", "install", "--yes", "--no-install-recommends"]
+        + resolved
+    )
+    if status != 0:
+        return status
+
+    print(NOTE, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(141)
