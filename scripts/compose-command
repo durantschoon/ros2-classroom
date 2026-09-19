@@ -12,6 +12,7 @@ Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
 """
 
 import shutil
+import os
 import signal
 import subprocess
 import sys
@@ -129,9 +130,23 @@ def probe_succeeds(argv: Sequence[str]) -> bool:
     return completed.returncode == 0
 
 
-def detect() -> Optional[Candidate]:
+def search_order(compose_env: str) -> Tuple[Candidate, ...]:
+    """The candidates to try, in order.  Pure.
+
+    When the caller has already chosen a compose command through COMPOSE, the
+    candidate it names goes first.  Otherwise a host with both engines answers
+    "docker" to --engine while everything else runs podman-compose, and the
+    image that Podman built is then looked for in Docker.  A COMPOSE that names
+    nothing we know (a wrapper, a test double) leaves the order alone.
+    """
+    words = tuple(compose_env.split())
+    chosen = [c for c in CANDIDATES if words[: len(c.command)] == c.command]
+    return tuple(chosen) + tuple(c for c in CANDIDATES if c not in chosen)
+
+
+def detect(compose_env: str = "") -> Optional[Candidate]:
     """The first candidate whose binary exists and whose probe exits zero."""
-    for candidate in CANDIDATES:
+    for candidate in search_order(compose_env):
         if installed(candidate.command[0]) and probe_succeeds(candidate.probe):
             return candidate
     return None
@@ -139,7 +154,7 @@ def detect() -> Optional[Candidate]:
 
 def main(argv: Sequence[str]) -> int:
     mode = parse_mode(argv)
-    found = detect()
+    found = detect(os.environ.get("COMPOSE", ""))
     if found is None:
         if mode is Mode.EXPLAIN:
             for line in explain_nothing_found(installed("docker"), installed("podman")):

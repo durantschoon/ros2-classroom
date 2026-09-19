@@ -55,6 +55,34 @@ class ComposeCommandTests(ScriptTestCase):
         self.assertStatus(run, 0)
         self.assertEqual("docker-compose\n", run.out)
 
+    # --- a caller that has already chosen, through COMPOSE ------------------
+
+    def test_compose_in_the_environment_decides_the_engine(self):
+        """Both engines work; without this, --engine says docker while the
+        caller is running podman-compose, and looks for its image in Docker."""
+        self.with_all_four()
+        for compose in ("podman-compose", "podman-compose -p ros2-tutorials-selftest"):
+            with self.subTest(compose=compose):
+                self.assertEqual("podman\n", self.run_script("--engine", COMPOSE=compose).out)
+        self.assertEqual("podman podman-compose\n",
+                         self.run_script("--make", COMPOSE="podman-compose").out)
+        self.assertEqual("podman\n", self.run_script("--engine", COMPOSE="podman compose").out)
+        self.assertEqual("docker\n", self.run_script("--engine", COMPOSE="docker-compose").out)
+
+    def test_without_compose_the_search_order_is_unchanged(self):
+        self.with_all_four()
+        self.assertEqual("docker\n", self.run_script("--engine").out)
+        self.assertEqual("docker\n", self.run_script("--engine", COMPOSE="").out)
+
+    def test_a_compose_that_names_nothing_known_leaves_the_order_alone(self):
+        self.with_all_four()
+        self.assertEqual("docker\n", self.run_script("--engine", COMPOSE="my-wrapper up").out)
+
+    def test_a_chosen_compose_that_does_not_work_falls_back(self):
+        self.with_all_four()
+        self.sandbox.fake("podman-compose", exit_code=1)  # present, probe fails
+        self.assertEqual("docker\n", self.run_script("--engine", COMPOSE="podman-compose").out)
+
     def test_a_missing_binary_is_skipped_not_probed(self):
         """Only podman-compose is installed at all."""
         self.sandbox.fake("podman-compose", rules=PODMAN_COMPOSE_OK, exit_code=1)
