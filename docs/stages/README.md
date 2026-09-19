@@ -186,6 +186,18 @@ Unresolved, and deliberately not slipped into a port stage:
   pass it on, so the project is decided in two places.
 - `quote()` is duplicated in `pkg` and `tutorial`; sharing it needs a Dockerfile
   change.
+- From stage 06: `make check` now takes about 27 s against a 30 s budget,
+  because it runs the whole self-test against fakes some thirteen times. Share
+  scenarios between tests, or raise the budget.
+- From stage 06: `tests/host/test_smoke_container.py` still links `grep`,
+  `tail`, `awk` and friends for a script that no longer calls them, and carries
+  a dead `SESSION_START`. Harmless; tidy in a tests-only change.
+- From stage 06: when the desktop never becomes ready, the suite still exits
+  with no summary line, the same "stops counting" shape the port removed from
+  the missing-engine path.
+- From the stage 06 review: neither the shell suite nor the port tears down
+  when its output pipe closes early (`make selftest | head`). Pre-existing;
+  the containers are left running until the next run.
 - **No real `docker compose` has ever run this project.** Every real run so far
   is Podman on WSL. The macOS section of `docs/platform-test-matrix.md` is
   where that gets tested.
@@ -199,7 +211,7 @@ Unresolved, and deliberately not slipped into a port stage:
 | 03 | Port | Container scripts: `pkg`, `tutorial`, `init-workspace`, `install-ros-packages` | parallel with 04 | merged |
 | 04 | Port | Host scripts: `compose-command`, `compose-up`, `check-host`, `run-quiet`, `open-url`, `base-image-digest` | parallel with 03 | merged |
 | 05 | Tests only | Black-box tests for `scripts/smoke-container` itself: isolation, accounting, cleanup (retro first) | alone | merged |
-| 06 | Port | `scripts/smoke-container`, last | alone | next |
+| 06 | Port | `scripts/smoke-container`, last | alone | merged |
 
 The suite's port was planned as stage 05. It became stage 06 when the rule
 "tests before ports" was applied to the suite itself: it judged every other
