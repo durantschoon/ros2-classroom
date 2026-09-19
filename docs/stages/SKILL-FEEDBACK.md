@@ -9,6 +9,14 @@ It exists because the skill's retro step writes only to the repo's practices
 section. Every retro therefore improved one repository and nothing else. The
 first entry below closes that loop.
 
+**This file is the narrative; the submissions are in the outbox.** Each entry
+below is also one file in
+[`docs/friction/outbox/claude-config/`](../friction/outbox/claude-config/), with
+its provenance, evidence and occurrence count, for `claude-config`'s curator to
+triage into that repository's own friction log. The "proposed text" below was
+written against an older `SKILL.md`, and agents there are generated from
+`agent-templates/`: read it as intent, not as text to paste.
+
 **How to use this file.** On the machine that holds the skill's source, apply
 each `proposed` entry (or decline it), then set its status here to
 `upstreamed <date>` or `declined <reason>` and commit. Each entry gives the
