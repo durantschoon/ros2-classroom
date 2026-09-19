@@ -2,7 +2,7 @@ name: Docker image
 
 on:
   push:
-    branches: ["main", "python-port", "docker/**"]
+    branches: ["main", "native-commands", "docker/**"]
   pull_request:
   workflow_dispatch:
 

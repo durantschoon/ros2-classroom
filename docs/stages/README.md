@@ -6,18 +6,27 @@ in an isolated git worktree. Executors never review themselves.
 
 ## This pipeline's branches
 
-The Python port runs on the integration branch **`python-port`**, not on `main`.
-Prompts are committed to `python-port`, executors branch from it, and verified
-stages merge back into it. The whole branch is promoted to `main` only when the
-port is complete and verified end to end — that promotion is the user's call.
+Stages run on an integration branch, never on `main`. Prompts are committed to
+the integration branch, executors branch from it, and verified stages merge
+back into it. The whole branch is promoted to `main` only when it is complete
+and verified end to end, and that promotion is the user's call.
+
+| Integration branch | Work | Stages | State |
+|---|---|---|---|
+| `python-port` | Shell scripts to Python | 01-06 | merged to `main` as `a24571d`, branch deleted |
+| `native-commands` | Roadmap Stage 2, "What you would have run" | 07- | in progress |
+
+`native-commands` is a branch for a reason particular to it: stage 07 adds a
+question whose second answer shows nothing until the recipes of stages 08 and
+09 exist. `main` must never offer a student a choice that does nothing.
 
 ## Numbering
 
 One global sequence: `stage-01`, `stage-02`, and so on, never reused. Each stage
 has exactly two files:
 
-- `stage-NN-PROMPT.md` — written by the coordinator, committed to `python-port`
-  *before* the executor launches. Committing first reserves the number and makes
+- `stage-NN-PROMPT.md` — written by the coordinator, committed to the integration
+  branch *before* the executor launches. Committing first reserves the number and makes
   the committed text canonical.
 - `stage-NN-REPORT.md` — written by the executor, in the same single commit as
   its change.
@@ -33,8 +42,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 | Gate | Command | Notes |
 |---|---|---|
-| Static | `make lint` | Validates `compose.yaml`; stage 01 extends it to shellcheck and Python 3.9 checks |
-| Full suite (end to end) | `make selftest` | Builds the image and exercises every documented workflow, about 10 minutes. 32/32 at `1b29b66` |
+| Static | `make lint` | Validates `compose.yaml`, and lints every script by its shebang (Python 3.9 grammar for host scripts) |
+| Fast tests | `make check` | Black-box tests against fakes; no engine needed. 173 tests, about 28 s, at `a24571d` |
+| Full suite (end to end) | `make selftest` | Builds the image and exercises every documented workflow, about 10 minutes. 48/48 at `a24571d` |
 
 `make selftest` runs as its own compose project so it can never touch real
 work. Stages that may run at the same time must isolate it further, because
@@ -44,13 +54,9 @@ they would otherwise share the project, host port, and image tag:
 SELFTEST_PROJECT=ros2-tutorials-stNN SELFTEST_NOVNC_PORT=60NN SELFTEST_ROS_DOMAIN_ID=NN IMAGE_NAME=ros2-tutorials-stNN make selftest
 ```
 
-Known gaps, as of scaffolding:
-
-- **CI has never run.** `.github/workflows/docker-image.yml` triggers on pushes
-  to `docker/**` and on pull requests; neither has happened. Nothing it checks
-  has ever been checked.
-- **shellcheck and hadolint are not installed locally**, so `make lint` has
-  never linted a script. Stage 01 addresses both.
+CI runs all of these on every push to the integration branch and on pull
+requests: `lint` (with `make check`), `smoke`, `smoke-podman`, `build-arm64`,
+and `scan`. The first fully green run was on `90998fd`.
 
 ## Environment facts executors need
 
@@ -104,7 +110,7 @@ the report's Blocked section instead of improvising an answer.
 
 ## Coordinator practices
 
-- Stage prompts land on `python-port` before launch: canonical text, and the
+- Stage prompts land on the integration branch before launch: canonical text, and the
   number reserved.
 - At most one in-flight stage touches any shared registration file. In this
   repo those are `Makefile`, `.github/workflows/docker-image.yml`, `Dockerfile`,
@@ -115,7 +121,7 @@ the report's Blocked section instead of improvising an answer.
 - Stages running concurrently get distinct `SELFTEST_PROJECT`,
   `SELFTEST_NOVNC_PORT`, `SELFTEST_ROS_DOMAIN_ID`, and `IMAGE_NAME`.
 - Executors push their own stage branch, and on this host that succeeds. The
-  coordinator still does every merge and every push of `python-port`.
+  coordinator still does every merge and every push of the integration branch.
 - Review is the diff plus an independent rerun of the gates, never reading the
   report alone.
 - A retro every 5 stages (before authoring stage 05, 10, …), plus whenever the
@@ -127,7 +133,7 @@ Patterns across the reports of stages 01-04, and the rule each one became:
 
 - **The executor's worktree was created at a stale commit in 4 of 4 stages.**
   Every prompt now opens with a "First step": check for the prompt file, and
-  fast-forward to `origin/python-port` when it is missing.
+  fast-forward to the integration branch on `origin` when it is missing.
 - **The coordinator's own test payloads were wrong in 3 of 4 stages.** Stage
   01's negative control could not fail at the severity the same prompt
   specified; stage 03's "remove the tool from PATH" command left the tool on
@@ -199,6 +205,20 @@ Unresolved, and deliberately not slipped into a port stage:
 - **No real `docker compose` has ever run this project.** Every real run so far
   is Podman on WSL. The macOS section of `docs/platform-test-matrix.md` is
   where that gets tested.
+
+## Plan for roadmap Stage 2, "What you would have run"
+
+| Stage | Kind | Scope | State |
+|---|---|---|---|
+| 07 | Feature | The first-run question, its saved answer, `make choose`, and the `EXPLAIN` override | authored |
+| 08 | Feature | The recipe data model and platform detection; the self-test pins `EXPLAIN=0` | planned |
+| 09 | Feature | Linux/apt recipes, verified for real in CI; targets print them | planned |
+| 10 | Feature | macOS and WSL recipes, entering as `verified-by-hand` or `community-reported` (retro first) | planned |
+
+These are new features, not ports, so guardrail 8 reads differently: existing
+behaviour is preserved exactly for a student who answers 1 or is never asked.
+A new script and its tests may arrive in the same stage; "tests before ports"
+is about code that already exists.
 
 ## Plan for the Python port
 
