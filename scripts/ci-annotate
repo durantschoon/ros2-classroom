@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Run a command in CI and surface its failures as GitHub annotations.
+
+    ci-annotate TITLE -- COMMAND [ARG...]
+
+The command's output streams through unchanged, so the job log reads as
+before.  If the command fails, every `FAIL` line and the last lines of output
+are printed again as `::error` workflow commands.  GitHub turns those into
+annotations on the pull request, which are readable without signing in -- job
+logs are not, and a red cross with no reason helps nobody.
+
+The command's exit status is this script's exit status.
+
+Stdlib only, Python 3.9-compatible.
+"""
+
+import re
+import subprocess
+import sys
+from collections import deque
+from typing import Deque, List, Sequence
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+FAIL_LINE = re.compile(r"^\s*FAIL\s")
+TAIL_LINES = 25
+MAX_FAIL_ANNOTATIONS = 9  # GitHub shows ten annotations per step; one is the tail
+USAGE = "usage: ci-annotate TITLE -- COMMAND [ARG...]"
+
+
+def plain(line: str) -> str:
+    return ANSI.sub("", line.rstrip("\n"))
+
+
+def escape_data(text: str) -> str:
+    """Workflow-command escaping for the message part."""
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def escape_property(text: str) -> str:
+    return escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def annotations(title: str, fails: Sequence[str], tail: Sequence[str]) -> List[str]:
+    out = []
+    for line in list(fails)[:MAX_FAIL_ANNOTATIONS]:
+        out.append("::error title={}::{}".format(escape_property(title), escape_data(line.strip())))
+    if tail:
+        out.append("::error title={}::{}".format(
+            escape_property(title + " (last lines)"), escape_data("\n".join(tail))))
+    return out
+
+
+def main(argv: Sequence[str]) -> int:
+    if len(argv) < 3 or argv[1] != "--":
+        print(USAGE, file=sys.stderr)
+        return 2
+    title, command = argv[0], list(argv[2:])
+
+    fails: List[str] = []
+    tail: Deque[str] = deque(maxlen=TAIL_LINES)
+    try:
+        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as err:
+        print("::error title={}::could not run {}: {}".format(
+            escape_property(title), escape_data(command[0]), escape_data(str(err.strerror))))
+        return 127
+    assert child.stdout is not None
+    for raw in iter(child.stdout.readline, b""):
+        text = raw.decode("utf-8", errors="replace")
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        line = plain(text)
+        tail.append(line)
+        if FAIL_LINE.match(line):
+            fails.append(line)
+    status = child.wait()
+    if status != 0:
+        for line in annotations(title, fails, list(tail)):
+            print(line)
+        sys.stdout.flush()
+    return 128 - status if status < 0 else status
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
