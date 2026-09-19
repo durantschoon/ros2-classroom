@@ -248,6 +248,18 @@ def ready_after(tries: int) -> Sequence[Dict[str, object]]:
     return (rule(["true"], exit_code=1, match="all", times=tries),)
 
 
+# The templated-pubsub build fails, noisily: seven lines, of which the suite
+# prints the last five under the FAIL line.
+PUBSUB_BUILD_FAILS: Sequence[Dict[str, object]] = (
+    rule(
+        ["pkg new pkg_smoke_pubsub --template pubsub --build"],
+        stdout="".join("build log line {}\n".format(n) for n in range(1, 8)),
+        exit_code=1,
+        match="contains",
+    ),
+)
+
+
 # --- running a scenario once, and sharing it --------------------------------
 
 
@@ -760,22 +772,38 @@ class Readiness(SmokeTest):
 
 
 class EngineDetection(SmokeTest):
-    """What happens today when the engine lookup fails in the middle of the run.
+    """A missing engine costs one check, not the rest of the run.
 
-    Pinned as-is, not endorsed: see the stage 05 report's Open questions.
+    The shell suite died under `set -e` here: exit 1, a message on stderr, and
+    no summary and no `failed checks:` list at all -- the "silently stops
+    counting" failure these tests exist to guard against.  Stage 06 turned it
+    into an ordinary failed check, so everything after it is still asked and
+    still accounted for.
     """
 
     def missing(self) -> Scenario:
         return scenario("no_engine", no_engine=True)
 
-    def test_a_missing_engine_aborts_the_suite_with_no_summary(self) -> None:
+    def test_a_missing_engine_fails_one_check_and_the_run_carries_on(self) -> None:
         case = self.missing()
         self.assertEqual(1, case.run.status, case.report())
         # It got as far as the step that needs the engine...
         self.assertIn("== Image and environment", case.run.out, case.report())
-        # ...and then `set -e` took it out, with no accounting at all.
-        self.assertNotIn(" passed, ", case.run.out, case.report())
-        self.assertNotIn("failed checks:", case.run.out, case.report())
+        self.assertIn("no container engine found to inspect the image", case.marked("FAIL"))
+        # ...and the steps after it still ran.
+        self.assertIn("== Turtlesim", case.run.out, case.report())
+        self.assertIn("== Persistence across container recreation", case.run.out, case.report())
+        # Nothing is lost from the accounting: the summary is printed, and the
+        # new failure is named in the list under it.
+        passed, failed = case.summary()
+        self.assertEqual(len(case.marked("PASS")), passed, case.report())
+        self.assertEqual(len(case.marked("FAIL")), failed, case.report())
+        lines = case.run.out_lines
+        start = lines.index("failed checks:")
+        listed = [
+            line.strip()[2:] for line in lines[start + 1 :] if line.strip().startswith("- ")
+        ]
+        self.assertIn("no container engine found to inspect the image", listed)
         self.assertIn("no working docker or podman compose found", case.run.err, case.report())
 
     def test_a_missing_engine_still_cleans_up(self) -> None:
@@ -822,17 +850,34 @@ class Housekeeping(SmokeTest):
             all_pass().calls(),
         )
 
-    def test_it_writes_two_log_files_into_the_hosts_own_tmp(self) -> None:
-        # Two `>/tmp/pkg-smoke-*.log` redirections are on the HOST side of the
-        # pipeline, not inside the container.  Pinned because it is observable
-        # and stage 06 must not change it by accident, not because it is right;
-        # raised under the stage 05 report's Open questions.
-        all_fail()
-        for path in ("/tmp/pkg-smoke-pubsub.log", "/tmp/pkg-smoke-msgs.log"):
-            self.assertTrue(os.path.exists(path), "{} was not written".format(path))
-            self.assertGreaterEqual(
-                os.path.getmtime(path), SESSION_START, "{} is stale".format(path)
-            )
+    def test_a_run_writes_no_log_files_into_the_hosts_own_tmp(self) -> None:
+        # Two `>/tmp/pkg-smoke-*.log` redirections used to sit on the HOST side
+        # of the pipeline rather than inside the quoted container command, so a
+        # run of the suite littered the host's own /tmp.  Stage 06 keeps that
+        # output in memory instead.  The files are removed first, and the
+        # scenario is one no other test shares, so a cached run cannot make
+        # this pass by accident.
+        paths = ("/tmp/pkg-smoke-pubsub.log", "/tmp/pkg-smoke-msgs.log")
+        for path in paths:
+            if os.path.exists(path):
+                os.remove(path)
+        scenario("no_host_tmp_writes")
+        for path in paths:
+            self.assertFalse(os.path.exists(path), "{} was written".format(path))
+
+    def test_a_failing_pkg_new_shows_the_tail_of_its_output(self) -> None:
+        # That captured output is not thrown away: when the check fails, its
+        # last five lines are printed, indented, under the FAIL line, which is
+        # what the discarded log files never allowed.
+        case = scenario("pubsub_build_fails", compose_rules=PUBSUB_BUILD_FAILS)
+        lines = case.run.out_lines
+        marker = "FAIL pkg new --template pubsub failed to build"
+        where = [i for i, line in enumerate(lines) if strip_ansi(line).strip() == marker]
+        self.assertEqual(1, len(where), case.report())
+        shown = lines[where[0] + 1 : where[0] + 6]
+        self.assertEqual(
+            ["    build log line {}".format(n) for n in range(3, 8)], shown, case.report()
+        )
 
     @unittest.skipIf(GIT_STATUS_AT_IMPORT is None, "git is not available here")
     def test_the_repository_is_left_untouched_by_a_run(self) -> None:
