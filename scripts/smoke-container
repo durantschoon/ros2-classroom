@@ -1,185 +1,288 @@
-#!/usr/bin/env bash
-# Automated smoke tests for the ROS 2 tutorial workstation.
+#!/usr/bin/env python3
+"""Automated smoke tests for the ROS 2 tutorial workstation.
+
+These are the claims the README makes, checked against a real container:
+turtlesim runs, the browser desktop answers, packages install, a source
+package builds, and work survives a container recreation.
+
+The container engine is auto-detected: Docker when it is available, otherwise
+rootless Podman.  Override with COMPOSE=... if you need a specific one.  The
+suite is validated against docker compose in CI; the Podman path is
+best-effort, because podman-compose's flag coverage varies by version.
+
+Usage: ./scripts/smoke-container [--keep]
+  --keep   leave containers and volumes in place for inspection
+
+This file is a script, not a unittest suite: its printed transcript -- the
+step titles, the PASS/FAIL names, the summary -- is its interface, and
+tests/host/test_smoke_container.py pins it line by line.
+
+Time and the network stay external commands on purpose: every wait runs the
+`sleep` command and every HTTP probe runs `curl`, as subprocesses, because
+those are the only seams the black-box tests have for time and the network.
+
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
+
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Sequence
+
+REPO = Path(__file__).resolve().parent.parent
+
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+# Inside the container noVNC always listens here, whatever host port the
+# self-test publishes it on.
+CONTAINER_NOVNC_PORT = "6080"
+
+# Readiness: how many times each wait loop may go round, and how long the
+# external `sleep` waits between tries.
+EXEC_TRIES = 30
+EXEC_WAIT = "2"
+XVFB_TRIES = 30
+XVFB_WAIT = "1"
+
+
+class Abort(Exception):
+    """An unrecoverable step: the suite stops, but still cleans up.
+
+    This is what `set -e` did in the shell version -- a failing `compose
+    build` or `compose up` ends the run -- and what the readiness give-up
+    does.  It is an ordinary control-flow signal, never a traceback.
+    """
+
+    def __init__(self, status: int):
+        super().__init__("aborting with status {}".format(status))
+        self.status = status
+
+
+class Result(NamedTuple):
+    """What a command did: its status and whatever output was captured."""
+
+    status: int
+    stdout: str
+    stderr: str
+
+
+# --- pure core: text in, verdict or text out --------------------------------
 #
-# These are the claims the README makes, checked against a real container:
-# turtlesim runs, the browser desktop answers, packages install, a source
-# package builds, and work survives a container recreation.
+# Every check below is a pure function of a command's result.  Running the
+# command is separate, and lives in the imperative half of this file.
+
+
+def substitution(text: str) -> str:
+    """`$(cmd)`: the captured output with its trailing newlines removed."""
+    return text.rstrip("\n")
+
+
+def here_lines(text: str) -> List[str]:
+    """The lines a `<<<"$text"` here-string feeds a filter.
+
+    The here-string appends a newline, so even the empty string is one
+    (empty) line -- which is why `tail -5` of nothing yields nothing rather
+    than an error.
+    """
+    return (text + "\n").split("\n")[:-1]
+
+
+def tail(text: str, count: int) -> str:
+    """`$(tail -N <<<"$text")`: the last `count` lines, trailing newlines gone."""
+    return substitution("\n".join(here_lines(text)[-count:]))
+
+
+def grep_last(text: str, needle: str) -> str:
+    """`$(grep NEEDLE <<<"$text" | tail -1)`: the last matching line, or ''."""
+    hits = [line for line in here_lines(text) if needle in line]
+    return hits[-1] if hits else ""
+
+
+def contains(text: str, needle: str) -> bool:
+    """`grep -q NEEDLE`: the needle appears anywhere in the text."""
+    return needle in text
+
+
+def starts_a_line(text: str, prefix: str) -> bool:
+    """`grep -q '^PREFIX'`: some line begins with the prefix."""
+    return any(line.startswith(prefix) for line in here_lines(text))
+
+
+def has_line(text: str, whole: str) -> bool:
+    """`grep -qx WHOLE`: some line is exactly the given text."""
+    return any(line == whole for line in here_lines(text))
+
+
+def spaces_for_newlines(text: str) -> str:
+    """`$(tr '\\n' ' ' <<<"$text")`: one line, for quoting inside a message."""
+    return substitution((text + "\n").replace("\n", " "))
+
+
+def first_field(text: str) -> str:
+    """`$(... | awk '{print $1}')`: the first field of each line."""
+    fields = []
+    for line in here_lines(text):
+        words = line.split()
+        fields.append(words[0] if words else "")
+    return substitution("\n".join(fields))
+
+
+def squeezed_first_line(text: str) -> str:
+    """`$(... | tr -d ' \\r' | head -1)`: the Xvfb owner probe's reading."""
+    return substitution(text.replace(" ", "").replace("\r", "")).split("\n")[0]
+
+
+def image_reference(name: str, distro: str) -> str:
+    """The `name:tag` the image was built under, from IMAGE_NAME and ROS_DISTRO."""
+    return "{}:{}".format(name or "ros2-tutorials", distro or "lyrical")
+
+
+# --- imperative shell: processes, output, and the run's accounting ----------
+
+
+class Suite:
+    """One run: the compose command it drives, and the score it keeps."""
+
+    def __init__(self, compose_text: str, keep: bool):
+        self.compose_text = compose_text
+        self.compose = compose_text.split()
+        self.keep = keep
+        self.passed = 0
+        self.failed = 0
+        self.failures = []  # type: List[str]
+
+    # -- output ------------------------------------------------------------
+
+    def say(self, text: str = "") -> None:
+        sys.stdout.write(text + "\n")
+
+    def ok(self, name: str) -> None:
+        self.say("  {}PASS{} {}".format(GREEN, RESET, name))
+        self.passed += 1
+
+    def bad(self, name: str) -> None:
+        self.say("  {}FAIL{} {}".format(RED, RESET, name))
+        self.failed += 1
+        self.failures.append(name)
+
+    def step(self, title: str) -> None:
+        self.say()
+        self.say("== {}".format(title))
+
+    def show_tail(self, text: str, count: int = 5) -> None:
+        """The last few lines of a failed command's output, indented under it."""
+        for line in here_lines(substitution(text))[-count:]:
+            self.say(("    " + line).rstrip())
+
+    # -- running commands --------------------------------------------------
+
+    def run(
+        self,
+        argv: Sequence[str],
+        out: str = "inherit",
+        err: str = "inherit",
+    ) -> Result:
+        """Run a command, with each stream inherited, captured, or discarded.
+
+        Python's own stdout is flushed first: the child writes straight to the
+        file descriptor, so without this the suite's lines would arrive after
+        the output of the commands they introduce.
+        """
+        sys.stdout.flush()
+        sys.stderr.flush()
+        streams = {"inherit": None, "capture": subprocess.PIPE, "null": subprocess.DEVNULL}
+        try:
+            proc = subprocess.run(
+                list(argv),
+                stdout=streams[out],
+                stderr=subprocess.STDOUT if err == "merge" else streams[err],
+                check=False,
+            )
+        except OSError as err_obj:
+            # A missing command is a failed check, never a traceback.
+            if err != "null":
+                sys.stderr.write("{}: {}\n".format(argv[0], err_obj.strerror or err_obj))
+            return Result(127, "", "")
+        return Result(
+            proc.returncode,
+            proc.stdout.decode("utf-8", errors="replace") if proc.stdout else "",
+            proc.stderr.decode("utf-8", errors="replace") if proc.stderr else "",
+        )
+
+    def must(self, argv: Sequence[str]) -> None:
+        """Run a command that the rest of the run depends on; abort if it fails."""
+        result = self.run(argv)
+        if result.status != 0:
+            raise Abort(result.status)
+
+    def wait(self, seconds: str) -> None:
+        """Wait by running the `sleep` command, never in process (see the header)."""
+        self.must(["sleep", seconds])
+
+    def compose_argv(self, args: Sequence[str]) -> List[str]:
+        return self.compose + list(args)
+
+    def desktop_argv(self, command: str) -> List[str]:
+        """A login-shell command in the desktop container, as the workstation user.
+
+        The command travels as one ordinary argument, however many lines it
+        has; nothing re-parses it on this side.
+        """
+        return self.compose_argv(
+            ["exec", "-T", "-u", "ros", "-e", "DISPLAY=:1", "desktop", "bash", "-lc", command]
+        )
+
+    def in_desktop(self, command: str, out: str = "inherit", err: str = "inherit") -> Result:
+        return self.run(self.desktop_argv(command), out=out, err=err)
+
+    def quietly(self, command: str) -> int:
+        """`in_desktop ... >/dev/null 2>&1`: only the exit status is wanted."""
+        return self.in_desktop(command, out="null", err="null").status
+
+    def capture(self, command: str, err: str = "inherit") -> str:
+        """`$(in_desktop ...)`: the command's stdout, trailing newlines gone."""
+        return substitution(self.in_desktop(command, out="capture", err=err).stdout)
+
+    def check(self, name: str, argv: Sequence[str]) -> None:
+        """Pass when the command exits zero; its output is never shown."""
+        if self.run(argv, out="null", err="null").status == 0:
+            self.ok(name)
+        else:
+            self.bad(name)
+
+    def check_desktop(self, name: str, command: str) -> None:
+        self.check(name, self.desktop_argv(command))
+
+    # -- cleanup -----------------------------------------------------------
+
+    def cleanup(self) -> None:
+        """Always the last thing: remove this run's own project, or say it was kept."""
+        if self.keep:
+            self.say()
+            self.say(
+                "containers kept (--keep); remove them with: {} down -v".format(
+                    self.compose_text
+                )
+            )
+        else:
+            self.say()
+            self.say("== cleaning up")
+            self.run(
+                self.compose_argv(["down", "-v", "--remove-orphans"]), out="null", err="null"
+            )
+
+
+# --- the scripts the suite sends into the container -------------------------
 #
-# The container engine is auto-detected: Docker when it is available, otherwise
-# rootless Podman.  Override with COMPOSE=... if you need a specific one.  The
-# suite is validated against docker compose in CI; the Podman path is
-# best-effort, because podman-compose's flag coverage varies by version.
-#
-# Usage: ./scripts/smoke-container [--keep]
-#   --keep   leave containers and volumes in place for inspection
-set -euo pipefail
+# Raw strings: the backslashes are for the *container's* bash, which expands
+# these here-documents.  `\$` writes a literal `${PROJECT_NAME}` into
+# CMakeLists.txt, and `\n` a literal backslash-n into the C++ source.
 
-cd "$(dirname "$0")/.."
-
-if [ -z "${COMPOSE:-}" ]; then
-    if ! COMPOSE="$(./scripts/compose-command)"; then
-        ./scripts/compose-command --explain
-        exit 1
-    fi
-fi
-
-# The self-test runs as its OWN compose project: own volumes, own network, own
-# host port.  Its cleanup deletes volumes, so it must never share them with a
-# student's real workstation -- and before this, it did: running `make selftest`
-# "because something looked wrong" destroyed the student's /workspace.
-SELFTEST_PROJECT="${SELFTEST_PROJECT:-ros2-tutorials-selftest}"
-COMPOSE="${COMPOSE} -p ${SELFTEST_PROJECT}"
-# Exported so the `make package`/`make build` checks below, which run make as a
-# student would, address this project too rather than the student's.
-export COMPOSE
-# A separate host port lets the self-test run beside a student's own desktop
-# on 6080.  Inside the container, noVNC always listens on 6080.
-export NOVNC_PORT="${SELFTEST_NOVNC_PORT:-6081}"
-CONTAINER_NOVNC_PORT=6080
-
-echo "using: ${COMPOSE}  (isolated project; host port ${NOVNC_PORT})"
-KEEP=0
-[ "${1:-}" = "--keep" ] && KEEP=1
-
-passed=0
-failed=0
-declare -a failures=()
-
-ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; passed=$((passed + 1)); }
-bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; failed=$((failed + 1)); failures+=("$1"); }
-step() { printf '\n== %s\n' "$1"; }
-
-check() {
-    local name="$1"; shift
-    if "$@" >/dev/null 2>&1; then ok "${name}"; else bad "${name}"; fi
-}
-
-# Run a login-shell command in the desktop container as the workstation user.
-in_desktop() {
-    $COMPOSE exec -T -u ros -e DISPLAY=:1 desktop bash -lc "$1"
-}
-
-cleanup() {
-    local status=$?
-    if [ "${KEEP}" -eq 1 ]; then
-        echo; echo "containers kept (--keep); remove them with: ${COMPOSE} down -v"
-    else
-        echo; echo '== cleaning up'
-        $COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
-    fi
-    exit "${status}"
-}
-trap cleanup EXIT
-
-step 'Build'
-$COMPOSE build
-ok 'image builds'
-
-step 'Start the desktop'
-$COMPOSE up -d desktop
-
-# Readiness is measured by the thing the rest of the suite needs -- exec
-# working -- rather than by `ps <service>`, which podman-compose does not
-# accept, and which would in any case only report that a container exists.
-ready=0
-for _ in $(seq 1 30); do
-    if in_desktop true >/dev/null 2>&1; then ready=1; break; fi
-    sleep 2
-done
-if [ "${ready}" -eq 1 ]; then
-    ok 'desktop container accepts commands'
-else
-    bad 'desktop container never became ready'
-    $COMPOSE logs desktop 2>&1 | tail -20
-    exit 1
-fi
-
-step 'Image and environment'
-# Read the image's configured user directly: podman-compose's `run` prints a
-# container id rather than the command's output, so a runtime probe is not
-# portable here.
-IMAGE="${IMAGE_NAME:-ros2-tutorials}:${ROS_DISTRO:-lyrical}"
-ENGINE="$(./scripts/compose-command --engine)"
-image_user="$($ENGINE image inspect --format '{{.Config.User}}' "${IMAGE}" 2>/dev/null \
-    || $ENGINE image inspect --format '{{.Config.User}}' "localhost/${IMAGE}" 2>/dev/null \
-    || true)"
-if [ "${image_user}" = 'ros' ]; then
-    ok 'the image defaults to the non-root ros user'
-else
-    bad "the image default user is '${image_user:-unset}', not ros"
-fi
-if [ "$($COMPOSE exec -T desktop ps -o user= -C Xvfb 2>/dev/null | tr -d ' \r' | head -1)" = 'ros' ]; then
-    ok 'desktop programs run as the non-root ros user'
-else
-    bad 'desktop programs are not running as ros'
-fi
-check 'ROS_DISTRO is set'       in_desktop '[ -n "$ROS_DISTRO" ]'
-check 'ros2 is on PATH'         in_desktop 'command -v ros2'
-check 'rosdep is on PATH'       in_desktop 'command -v rosdep'
-check 'colcon is on PATH'       in_desktop 'command -v colcon'
-
-step 'Turtlesim'
-executables="$(in_desktop 'ros2 pkg executables turtlesim' || true)"
-if grep -q 'turtlesim_node' <<<"${executables}" && grep -q 'turtle_teleop_key' <<<"${executables}"; then
-    ok 'turtlesim_node and turtle_teleop_key are installed'
-else
-    bad "turtlesim executables missing (got: ${executables})"
-fi
-
-# Start turtlesim on the container's own X display and require it to survive.
-if in_desktop 'nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 & sleep 5; pgrep -f turtlesim_node'; then
-    ok 'turtlesim stays alive for 5s on the virtual display'
-    in_desktop 'pkill -f turtlesim_node' >/dev/null 2>&1 || true
-else
-    bad "turtlesim exited early: $(in_desktop 'cat /tmp/turtlesim.log' 2>/dev/null | tail -5)"
-fi
-
-step 'Browser desktop'
-if $COMPOSE exec -T desktop curl --fail --silent --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors \
-        "http://127.0.0.1:${CONTAINER_NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
-    ok 'noVNC answers inside the container'
-else
-    bad 'noVNC did not answer inside the container'
-fi
-
-if curl --fail --silent --max-time 10 --retry 6 --retry-delay 5 --retry-all-errors \
-        "http://127.0.0.1:${NOVNC_PORT}/vnc.html" >/dev/null 2>&1; then
-    ok "noVNC answers on the host at http://localhost:${NOVNC_PORT}"
-else
-    bad "noVNC did not answer on the host port ${NOVNC_PORT}"
-fi
-
-step 'Cross-service DDS discovery'
-# Subscribe from the desktop container to a topic published by a separate
-# compose service.  This asserts the same property as running the bundled
-# talker/listener pair, but reads the message through `exec` instead of
-# `compose logs`: podman-compose needs --profile to address a profile service,
-# and its `logs` passes a --color flag that Podman 3.x rejects.
-$COMPOSE --profile demo up -d talker
-sleep 10
-if in_desktop 'timeout 30 ros2 topic echo --once /chatter' 2>/dev/null \
-        | grep -q 'hello from the talker service'; then
-    ok 'a node in one service receives messages from another service'
-else
-    bad 'no message crossed between compose services'
-fi
-$COMPOSE --profile demo stop talker >/dev/null 2>&1 || true
-
-step 'Package installation helper'
-if in_desktop 'install-ros-packages demo-nodes-cpp' >/dev/null 2>&1; then
-    ok 'install-ros-packages installs a ROS short name'
-    check 'installed package is runnable' in_desktop 'ros2 pkg executables demo_nodes_cpp | grep -q talker'
-else
-    bad 'install-ros-packages failed for demo-nodes-cpp'
-fi
-if in_desktop 'install-ros-packages definitely-not-a-package' >/dev/null 2>&1; then
-    bad 'install-ros-packages silently accepted a missing package'
-else
-    ok 'install-ros-packages fails loudly on a missing package'
-fi
-
-step 'Source workspace build'
-build_script='
+BUILD_SCRIPT = r"""
 set -e
 init-workspace >/dev/null
 mkdir -p /workspace/src/smoke_pkg
@@ -212,128 +315,631 @@ CPP
 cd /workspace
 rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -r -y >/dev/null 2>&1 || true
 colcon build --symlink-install --packages-select smoke_pkg
-'
-if in_desktop "${build_script}"; then
-    ok 'colcon builds a source package in the persistent workspace'
-else
-    bad 'colcon build of the smoke package failed'
-fi
+"""
 
-if in_desktop 'ros2 run smoke_pkg smoke_node' | grep -q 'smoke_pkg overlay works'; then
-    ok 'new shells source the workspace overlay automatically'
-else
-    bad 'the built package did not run from an automatically sourced overlay'
-fi
+# The reason `pkg test` exists: `colcon test` exits 0 even when a test fails.
+# Break one file's formatting, require a non-zero exit, and put the file back
+# so later steps see the package as it was.
+BROKEN_TEST_SCRIPT = "\n".join(
+    (
+        "f=/workspace/src/pkg_smoke_pubsub/src/talker.cpp",
+        'cp "$f" /tmp/talker.cpp.orig',
+        'sed -i "s/^  rclcpp::init/rclcpp::init/" "$f"',
+        "pkg test pkg_smoke_pubsub >/tmp/pkg-smoke-broken.log 2>&1; status=$?",
+        'cp /tmp/talker.cpp.orig "$f"',
+        'exit "$status"',
+    )
+)
 
-step 'pkg helper: templates, interfaces, and lint'
-# `pkg new --template pubsub --build` should produce a real talker/listener
-# pair, not just a package that happens to compile.
-if in_desktop 'pkg new pkg_smoke_pubsub --template pubsub --build' >/tmp/pkg-smoke-pubsub.log 2>&1; then
-    ok 'pkg new --template pubsub builds'
-else
-    bad 'pkg new --template pubsub failed to build'
-fi
+# A local repository, so the clone needs no network.
+UPSTREAM_SCRIPT = r"""
+set -e
+mkdir -p /tmp/smoke-upstream
+cd /tmp/smoke-upstream
+git init -q .
+git config user.email smoke@example.com
+git config user.name smoke
+echo "smoke upstream" > README.md
+git add README.md
+git commit -qm "first commit"
+"""
 
-check 'templated package registers its talker executable' \
-    in_desktop 'ros2 pkg executables pkg_smoke_pubsub | grep -q talker'
 
-if in_desktop 'nohup ros2 run pkg_smoke_pubsub talker >/tmp/pkg-smoke-talker.log 2>&1 & sleep 3; timeout 15 ros2 topic echo --once /chatter' 2>/dev/null \
-        | grep -q 'hello from pkg_smoke_pubsub'; then
-    ok 'templated pubsub node actually publishes on /chatter'
-else
-    bad 'templated pubsub node did not publish on /chatter'
-fi
-# Match by exact process name (no -f): the pattern would otherwise match the
-# pkill invocation's own command line and kill the wrong thing.
-in_desktop 'pkill -x talker' >/dev/null 2>&1 || true
+# --- the steps --------------------------------------------------------------
 
-# `--interfaces` is the highest-risk mode: rosidl wiring in CMakeLists.txt and
-# package.xml is easy to get subtly wrong in ways that still build with
-# colcon but fail xmllint or `ros2 interface show`.
-if in_desktop 'pkg new pkg_smoke_msgs --interfaces --build' >/tmp/pkg-smoke-msgs.log 2>&1; then
-    ok 'pkg new --interfaces builds'
-else
-    bad 'pkg new --interfaces failed to build'
-fi
-check 'ros2 interface show works for a generated message' \
-    in_desktop 'ros2 interface show pkg_smoke_msgs/msg/Temperature'
-check 'ros2 interface show works for a generated service' \
-    in_desktop 'ros2 interface show pkg_smoke_msgs/srv/AddTwoInts'
 
-# `colcon test` exits 0 even on failure; `pkg test` is supposed to surface the
-# real verdict from `colcon test-result`. A freshly generated package is
-# expected to pass its own default ament_lint_auto tests cleanly.
-pkg_test_output="$(in_desktop 'pkg test pkg_smoke_pubsub' 2>&1 || true)"
-if grep -q '0 errors, 0 failures' <<<"${pkg_test_output}"; then
-    ok 'pkg test reports a clean lint result for a generated package'
-else
-    bad "pkg test did not report a clean lint result: $(tail -5 <<<"${pkg_test_output}")"
-fi
+def step_build(suite: Suite) -> None:
+    suite.step("Build")
+    suite.must(suite.compose_argv(["build"]))
+    suite.ok("image builds")
 
-step 'Student make targets (run from the host, as a student would)'
-# The roadmap's Stage 1 acceptance is about these targets, not `pkg` itself:
-# a student should get through package/build/test without typing an engine
-# command, and should see each real ros2/colcon command before it runs.
-make_out="$(make package PKG=make_smoke TEMPLATE=pubsub 2>&1 || true)"
-if grep -q '^+ ros2 pkg create make_smoke' <<<"${make_out}" \
-        && grep -q 'next: make build PKG=make_smoke' <<<"${make_out}"; then
-    ok 'make package prints the real command and points at make build'
-else
-    bad "make package output was not as expected: $(tail -3 <<<"${make_out}")"
-fi
-# A printed command is only useful if it can be pasted back.  The default
-# maintainer name has a space; unquoted, it would re-parse as two arguments.
-if grep -q -- "--maintainer-name 'ROS Developer'" <<<"${make_out}"; then
-    ok 'printed commands quote arguments so they paste correctly'
-else
-    bad 'printed ros2 pkg create line is not paste-safe'
-fi
 
-make_out="$(make build PKG=make_smoke 2>&1 || true)"
-if grep -q '^+ colcon build' <<<"${make_out}" \
-        && grep -q 'next: make run PKG=make_smoke' <<<"${make_out}"; then
-    ok 'make build prints colcon build and points at make run'
-else
-    bad "make build output was not as expected: $(tail -3 <<<"${make_out}")"
-fi
+def step_start_the_desktop(suite: Suite) -> None:
+    suite.step("Start the desktop")
+    suite.must(suite.compose_argv(["up", "-d", "desktop"]))
 
-make_out="$(make test PKG=make_smoke 2>&1 || true)"
-if grep -q '0 errors, 0 failures' <<<"${make_out}"; then
-    ok 'make test reports the real colcon test-result verdict'
-else
-    bad "make test did not report a clean result: $(tail -3 <<<"${make_out}")"
-fi
+    # Readiness is measured by the thing the rest of the suite needs -- exec
+    # working -- rather than by `ps <service>`, which podman-compose does not
+    # accept, and which would in any case only report that a container exists.
+    ready = False
+    for _ in range(EXEC_TRIES):
+        if suite.quietly("true") == 0:
+            ready = True
+            break
+        suite.wait(EXEC_WAIT)
+    if ready:
+        suite.ok("desktop container accepts commands")
+        return
+    suite.bad("desktop container never became ready")
+    logs = suite.run(suite.compose_argv(["logs", "desktop"]), out="capture", err="merge")
+    sys.stdout.write("".join(logs.stdout.splitlines(True)[-20:]))
+    raise Abort(1)
 
-# `make` exists inside the container, so a workstation target typed in the
-# wrong window must explain itself rather than fail with "No rule to make".
-# This command is expected to fail, so capture its status without tripping
-# the script's own set -e.
-guard_status=0
-guard_out="$(in_desktop 'cd /workspace && make turtlesim' 2>&1)" || guard_status=$?
-if [ "${guard_status}" -ne 0 ] && grep -q 'runs on your own computer' <<<"${guard_out}"; then
-    ok 'make typed inside the container explains where to run it'
-else
-    bad "make inside the container did not explain itself (exit ${guard_status})"
-fi
 
-step 'Persistence across container recreation'
-$COMPOSE up -d --force-recreate desktop
-sleep 5
-if in_desktop '[ -f /workspace/src/smoke_pkg/package.xml ]'; then
-    ok 'workspace source survives container recreation'
-else
-    bad 'workspace source was lost when the container was recreated'
-fi
-if in_desktop 'ros2 run smoke_pkg smoke_node' | grep -q 'smoke_pkg overlay works'; then
-    ok 'built overlay survives container recreation'
-else
-    bad 'built overlay was lost when the container was recreated'
-fi
+def step_image_and_environment(suite: Suite, domain: str) -> None:
+    suite.step("Image and environment")
+    # Read the image's configured user directly: podman-compose's `run` prints
+    # a container id rather than the command's output, so a runtime probe is
+    # not portable here.
+    image = image_reference(os.environ.get("IMAGE_NAME", ""), os.environ.get("ROS_DISTRO", ""))
+    engine = suite.run([str(REPO / "scripts" / "compose-command"), "--engine"], out="capture")
+    if engine.status != 0:
+        # Without an engine the image cannot be inspected.  That is one failed
+        # check, not the end of the run: a suite that stops counting hides
+        # every check after it.
+        suite.bad("no container engine found to inspect the image")
+    else:
+        inspect = [substitution(engine.stdout), "image", "inspect", "--format",
+                   "{{.Config.User}}"]
+        probe = suite.run(inspect + [image], out="capture", err="null")
+        text = probe.stdout
+        if probe.status != 0:
+            text += suite.run(
+                inspect + ["localhost/" + image], out="capture", err="null"
+            ).stdout
+        image_user = substitution(text)
+        if image_user == "ros":
+            suite.ok("the image defaults to the non-root ros user")
+        else:
+            suite.bad("the image default user is '{}', not ros".format(image_user or "unset"))
 
-step 'Result'
-printf '%d passed, %d failed\n' "${passed}" "${failed}"
-if [ "${failed}" -gt 0 ]; then
-    printf 'failed checks:\n'
-    printf '  - %s\n' "${failures[@]}"
-    exit 1
-fi
+    # The readiness probe above only proves that `exec` works, and supervisor
+    # may not have started Xvfb yet: under load this check failed about one run
+    # in three.  Wait for Xvfb to exist before asking who owns it.
+    xvfb_user = ""
+    for _ in range(XVFB_TRIES):
+        probe = suite.run(
+            suite.compose_argv(["exec", "-T", "desktop", "ps", "-o", "user=", "-C", "Xvfb"]),
+            out="capture",
+            err="null",
+        )
+        xvfb_user = squeezed_first_line(probe.stdout)
+        if xvfb_user:
+            break
+        suite.wait(XVFB_WAIT)
+    if xvfb_user == "ros":
+        suite.ok("desktop programs run as the non-root ros user")
+    else:
+        suite.bad("desktop programs are not running as ros")
+
+    suite.check_desktop("ROS_DISTRO is set", '[ -n "$ROS_DISTRO" ]')
+    suite.check_desktop(
+        "the self-test runs in its own ROS domain, not the student default",
+        '[ "$ROS_DOMAIN_ID" = "{}" ] && [ "$ROS_DOMAIN_ID" != 42 ]'.format(domain),
+    )
+    suite.check_desktop("ros2 is on PATH", "command -v ros2")
+    suite.check_desktop("rosdep is on PATH", "command -v rosdep")
+    suite.check_desktop("colcon is on PATH", "command -v colcon")
+
+
+def step_turtlesim(suite: Suite) -> None:
+    suite.step("Turtlesim")
+    executables = suite.capture("ros2 pkg executables turtlesim")
+    if contains(executables, "turtlesim_node") and contains(executables, "turtle_teleop_key"):
+        suite.ok("turtlesim_node and turtle_teleop_key are installed")
+    else:
+        suite.bad("turtlesim executables missing (got: {})".format(executables))
+
+    # Start turtlesim on the container's own X display and require it to survive.
+    alive = suite.in_desktop(
+        "nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 & "
+        "sleep 5; pgrep -f turtlesim_node"
+    )
+    if alive.status == 0:
+        suite.ok("turtlesim stays alive for 5s on the virtual display")
+        suite.quietly("pkill -f turtlesim_node")
+    else:
+        log = suite.capture("cat /tmp/turtlesim.log", err="null")
+        suite.bad("turtlesim exited early: {}".format(tail(log, 5)))
+
+
+def step_browser_desktop(suite: Suite, novnc_port: str) -> None:
+    suite.step("Browser desktop")
+    inside = suite.run(
+        suite.compose_argv(
+            ["exec", "-T", "desktop", "curl", "--fail", "--silent", "--max-time", "10",
+             "--retry", "12", "--retry-delay", "5", "--retry-all-errors",
+             "http://127.0.0.1:{}/vnc.html".format(CONTAINER_NOVNC_PORT)]
+        ),
+        out="null",
+        err="null",
+    )
+    if inside.status == 0:
+        suite.ok("noVNC answers inside the container")
+    else:
+        suite.bad("noVNC did not answer inside the container")
+
+    outside = suite.run(
+        ["curl", "--fail", "--silent", "--max-time", "10", "--retry", "6", "--retry-delay", "5",
+         "--retry-all-errors", "http://127.0.0.1:{}/vnc.html".format(novnc_port)],
+        out="null",
+        err="null",
+    )
+    if outside.status == 0:
+        suite.ok("noVNC answers on the host at http://localhost:{}".format(novnc_port))
+    else:
+        suite.bad("noVNC did not answer on the host port {}".format(novnc_port))
+
+
+def step_cross_service_dds(suite: Suite) -> None:
+    suite.step("Cross-service DDS discovery")
+    # Subscribe from the desktop container to a topic published by a separate
+    # compose service.  This asserts the same property as running the bundled
+    # talker/listener pair, but reads the message through `exec` instead of
+    # `compose logs`: podman-compose needs --profile to address a profile
+    # service, and its `logs` passes a --color flag that Podman 3.x rejects.
+    suite.must(suite.compose_argv(["--profile", "demo", "up", "-d", "talker"]))
+    suite.wait("10")
+    heard = suite.capture("timeout 30 ros2 topic echo --once /chatter", err="null")
+    if contains(heard, "hello from the talker service"):
+        suite.ok("a node in one service receives messages from another service")
+    else:
+        suite.bad("no message crossed between compose services")
+    suite.run(
+        suite.compose_argv(["--profile", "demo", "stop", "talker"]), out="null", err="null"
+    )
+
+
+def step_package_installation(suite: Suite) -> None:
+    suite.step("Package installation helper")
+    if suite.quietly("install-ros-packages demo-nodes-cpp") == 0:
+        suite.ok("install-ros-packages installs a ROS short name")
+        suite.check_desktop(
+            "installed package is runnable", "ros2 pkg executables demo_nodes_cpp | grep -q talker"
+        )
+    else:
+        suite.bad("install-ros-packages failed for demo-nodes-cpp")
+    if suite.quietly("install-ros-packages definitely-not-a-package") == 0:
+        suite.bad("install-ros-packages silently accepted a missing package")
+    else:
+        suite.ok("install-ros-packages fails loudly on a missing package")
+
+
+def step_source_workspace_build(suite: Suite) -> None:
+    suite.step("Source workspace build")
+    if suite.in_desktop(BUILD_SCRIPT).status == 0:
+        suite.ok("colcon builds a source package in the persistent workspace")
+    else:
+        suite.bad("colcon build of the smoke package failed")
+
+    overlay = suite.capture("ros2 run smoke_pkg smoke_node")
+    if contains(overlay, "smoke_pkg overlay works"):
+        suite.ok("new shells source the workspace overlay automatically")
+    else:
+        suite.bad("the built package did not run from an automatically sourced overlay")
+
+
+def step_pkg_helper(suite: Suite) -> None:
+    suite.step("pkg helper: templates, interfaces, and lint")
+    # `pkg new --template pubsub --build` should produce a real talker/listener
+    # pair, not just a package that happens to compile.  The build log is kept
+    # in memory: a failing check prints its tail, and nothing is written to the
+    # host's own /tmp.
+    pubsub = suite.in_desktop(
+        "pkg new pkg_smoke_pubsub --template pubsub --build", out="capture", err="merge"
+    )
+    if pubsub.status == 0:
+        suite.ok("pkg new --template pubsub builds")
+    else:
+        suite.bad("pkg new --template pubsub failed to build")
+        suite.show_tail(pubsub.stdout)
+
+    suite.check_desktop(
+        "templated package registers its talker executable",
+        "ros2 pkg executables pkg_smoke_pubsub | grep -q talker",
+    )
+
+    published = suite.capture(
+        "nohup ros2 run pkg_smoke_pubsub talker >/tmp/pkg-smoke-talker.log 2>&1 & "
+        "sleep 3; timeout 15 ros2 topic echo --once /chatter",
+        err="null",
+    )
+    if contains(published, "hello from pkg_smoke_pubsub"):
+        suite.ok("templated pubsub node actually publishes on /chatter")
+    else:
+        suite.bad("templated pubsub node did not publish on /chatter")
+    # Match by exact process name (no -f): the pattern would otherwise match
+    # the pkill invocation's own command line and kill the wrong thing.
+    suite.quietly("pkill -x talker")
+
+    # `--interfaces` is the highest-risk mode: rosidl wiring in CMakeLists.txt
+    # and package.xml is easy to get subtly wrong in ways that still build with
+    # colcon but fail xmllint or `ros2 interface show`.
+    msgs = suite.in_desktop(
+        "pkg new pkg_smoke_msgs --interfaces --build", out="capture", err="merge"
+    )
+    if msgs.status == 0:
+        suite.ok("pkg new --interfaces builds")
+    else:
+        suite.bad("pkg new --interfaces failed to build")
+        suite.show_tail(msgs.stdout)
+
+    suite.check_desktop(
+        "ros2 interface show works for a generated message",
+        "ros2 interface show pkg_smoke_msgs/msg/Temperature",
+    )
+    suite.check_desktop(
+        "ros2 interface show works for a generated service",
+        "ros2 interface show pkg_smoke_msgs/srv/AddTwoInts",
+    )
+
+    # `colcon test` exits 0 even on failure; `pkg test` is supposed to surface
+    # the real verdict from `colcon test-result`.  A freshly generated package
+    # is expected to pass its own default ament_lint_auto tests cleanly.
+    pkg_test_output = substitution(
+        suite.in_desktop("pkg test pkg_smoke_pubsub", out="capture", err="merge").stdout
+    )
+    if contains(pkg_test_output, "0 errors, 0 failures"):
+        suite.ok("pkg test reports a clean lint result for a generated package")
+    else:
+        suite.bad(
+            "pkg test did not report a clean lint result: {}".format(tail(pkg_test_output, 5))
+        )
+
+    if suite.quietly(BROKEN_TEST_SCRIPT) != 0:
+        suite.ok("pkg test exits non-zero when a test really fails")
+    else:
+        suite.bad("pkg test exited 0 although a style test should have failed")
+
+    # That run leaves a FAILED result recorded for pkg_smoke_pubsub, on
+    # purpose.  Testing a different package must not report it: the verdict is
+    # scoped to the package that was tested.  (It once was not, and `make test
+    # PKG=a` showed package b's stale failures.)
+    scoped_out = substitution(
+        suite.in_desktop(
+            "pkg new pkg_smoke_scoped --build >/dev/null 2>&1; pkg test pkg_smoke_scoped",
+            out="capture",
+            err="merge",
+        ).stdout
+    )
+    if contains(scoped_out, "0 errors, 0 failures"):
+        suite.ok("pkg test reads only the tested package's results")
+    else:
+        suite.bad(
+            "pkg test leaked another package's results: {}".format(
+                grep_last(scoped_out, "Summary")
+            )
+        )
+    # Leave the workspace with passing results recorded, as later steps found it.
+    suite.quietly("pkg test pkg_smoke_pubsub")
+
+
+def step_student_make_targets(suite: Suite) -> None:
+    suite.step("Student make targets (run from the host, as a student would)")
+    # The roadmap's Stage 1 acceptance is about these targets, not `pkg`
+    # itself: a student should get through package/build/test without typing an
+    # engine command, and should see each real ros2/colcon command before it runs.
+    make_out = substitution(
+        suite.run(
+            ["make", "package", "PKG=make_smoke", "TEMPLATE=pubsub"], out="capture", err="merge"
+        ).stdout
+    )
+    if starts_a_line(make_out, "+ ros2 pkg create make_smoke") and contains(
+        make_out, "next: make build PKG=make_smoke"
+    ):
+        suite.ok("make package prints the real command and points at make build")
+    else:
+        suite.bad("make package output was not as expected: {}".format(tail(make_out, 3)))
+    # A printed command is only useful if it can be pasted back.  The default
+    # maintainer name has a space; unquoted, it would re-parse as two arguments.
+    if contains(make_out, "--maintainer-name 'ROS Developer'"):
+        suite.ok("printed commands quote arguments so they paste correctly")
+    else:
+        suite.bad("printed ros2 pkg create line is not paste-safe")
+
+    make_out = substitution(
+        suite.run(["make", "build", "PKG=make_smoke"], out="capture", err="merge").stdout
+    )
+    if starts_a_line(make_out, "+ colcon build") and contains(
+        make_out, "next: make run PKG=make_smoke"
+    ):
+        suite.ok("make build prints colcon build and points at make run")
+    else:
+        suite.bad("make build output was not as expected: {}".format(tail(make_out, 3)))
+
+    make_out = substitution(
+        suite.run(["make", "test", "PKG=make_smoke"], out="capture", err="merge").stdout
+    )
+    if contains(make_out, "0 errors, 0 failures"):
+        suite.ok("make test reports the real colcon test-result verdict")
+    else:
+        suite.bad("make test did not report a clean result: {}".format(tail(make_out, 3)))
+
+    # `make` exists inside the container, so a workstation target typed in the
+    # wrong window must explain itself rather than fail with "No rule to make".
+    guard = suite.in_desktop("cd /workspace && make turtlesim", out="capture", err="merge")
+    if guard.status != 0 and contains(substitution(guard.stdout), "runs on your own computer"):
+        suite.ok("make typed inside the container explains where to run it")
+    else:
+        suite.bad(
+            "make inside the container did not explain itself (exit {})".format(guard.status)
+        )
+
+
+def step_container_helpers(suite: Suite) -> None:
+    suite.step("Container helpers: tutorial, init-workspace, pkg refusals")
+    # `pkg` and `tutorial` are what a student types inside the desktop, and the
+    # workspace helpers are append-only by design (docs/stages/README.md,
+    # guardrail 7).  Commands that are expected to fail have their status read
+    # rather than raising.
+
+    suite.quietly("init-workspace")
+    marker_before = first_field(
+        suite.in_desktop("md5sum /workspace/.ros-workstation", out="capture", err="null").stdout
+    )
+    again = suite.in_desktop("init-workspace", out="capture", err="merge")
+    marker_after = first_field(
+        suite.in_desktop("md5sum /workspace/.ros-workstation", out="capture", err="null").stdout
+    )
+    if again.status == 0 and contains(substitution(again.stdout), "already initialized"):
+        suite.ok("a second init-workspace reports the workspace is already initialized")
+    else:
+        suite.bad(
+            "init-workspace did not report an existing workspace (exit {})".format(again.status)
+        )
+    if marker_before and marker_before == marker_after:
+        suite.ok("init-workspace leaves the existing workspace marker untouched")
+    else:
+        suite.bad(
+            "the workspace marker changed: {} -> {}".format(
+                marker_before or "missing", marker_after or "missing"
+            )
+        )
+
+    usage = suite.in_desktop("tutorial", out="capture", err="merge")
+    if usage.status == 2 and contains(substitution(usage.stdout), "tutorial clone URL [DIRECTORY]"):
+        suite.ok("tutorial with no arguments exits 2 and prints usage")
+    else:
+        suite.bad(
+            "tutorial with no arguments: exit {}, not 2 with usage".format(usage.status)
+        )
+
+    if suite.quietly(UPSTREAM_SCRIPT) == 0:
+        clone = suite.in_desktop(
+            "tutorial clone /tmp/smoke-upstream smoke_clone", out="capture", err="merge"
+        )
+        if clone.status == 0 and starts_a_line(
+            substitution(clone.stdout), "+ git -C /workspace/src clone /tmp/smoke-upstream smoke_clone"
+        ):
+            suite.ok("tutorial clone echoes the real git command and succeeds")
+        else:
+            suite.bad(
+                "tutorial clone failed or did not echo git (exit {})".format(clone.status)
+            )
+        suite.check_desktop(
+            "the clone lands in /workspace/src", "[ -f /workspace/src/smoke_clone/README.md ]"
+        )
+        list_out = substitution(
+            suite.in_desktop("tutorial list", out="capture", err="merge").stdout
+        )
+        if has_line(list_out, "smoke_clone"):
+            suite.ok("tutorial list names the cloned repository")
+        else:
+            suite.bad(
+                "tutorial list did not name the clone (got: {})".format(
+                    spaces_for_newlines(list_out)
+                )
+            )
+    else:
+        suite.bad("could not create a local git repository to clone from")
+
+    # smoke_pkg was created by the source-workspace step above; reuse it rather
+    # than building another package.
+    tbuild = suite.in_desktop("tutorial build smoke_pkg", out="capture", err="merge")
+    if tbuild.status == 0 and starts_a_line(
+        substitution(tbuild.stdout), "+ colcon build --symlink-install --packages-select smoke_pkg"
+    ):
+        suite.ok("tutorial build echoes colcon build --packages-select and succeeds")
+    else:
+        suite.bad("tutorial build smoke_pkg failed (exit {})".format(tbuild.status))
+
+    # tutorial deps had no coverage at all.  It needs the network, as the
+    # package installation step above already does.
+    tdeps = suite.in_desktop("tutorial deps", out="capture", err="merge")
+    tdeps_out = substitution(tdeps.stdout)
+    if (
+        tdeps.status == 0
+        and starts_a_line(tdeps_out, "+ rosdep update --rosdistro")
+        and starts_a_line(
+            tdeps_out, "+ rosdep install --from-paths /workspace/src --ignore-src"
+        )
+    ):
+        suite.ok("tutorial deps echoes both rosdep commands and succeeds")
+    else:
+        suite.bad(
+            "tutorial deps failed (exit {}): {}".format(tdeps.status, tail(tdeps_out, 3))
+        )
+
+    pkg_usage = suite.in_desktop("pkg", out="capture", err="merge")
+    if pkg_usage.status == 2 and contains(
+        substitution(pkg_usage.stdout), "pkg new NAME [options]"
+    ):
+        suite.ok("pkg with no arguments exits 2 and prints usage")
+    else:
+        suite.bad("pkg with no arguments: exit {}, not 2 with usage".format(pkg_usage.status))
+
+    mixed = suite.in_desktop(
+        "pkg new smoke_bad_msgs --python --interfaces", out="capture", err="merge"
+    )
+    if mixed.status == 1 and contains(
+        substitution(mixed.stdout), "interface packages must be ament_cmake"
+    ):
+        suite.ok("pkg new --python --interfaces is refused with an explanation")
+    else:
+        suite.bad(
+            "pkg new --python --interfaces: exit {}, not 1 with an explanation".format(
+                mixed.status
+            )
+        )
+    suite.check_desktop(
+        "the refused interface package was never created", "[ ! -e /workspace/src/smoke_bad_msgs ]"
+    )
+
+    # Student work is append-only: creating a package that already exists must
+    # refuse, and must leave what is there untouched.
+    existing_before = first_field(
+        suite.in_desktop(
+            "md5sum /workspace/src/smoke_pkg/package.xml", out="capture", err="null"
+        ).stdout
+    )
+    clobber = suite.in_desktop("pkg new smoke_pkg", out="capture", err="merge")
+    existing_after = first_field(
+        suite.in_desktop(
+            "md5sum /workspace/src/smoke_pkg/package.xml", out="capture", err="null"
+        ).stdout
+    )
+    if clobber.status != 0 and contains(
+        substitution(clobber.stdout), "The directory already exists"
+    ):
+        suite.ok("pkg new refuses to create a package that already exists")
+    else:
+        suite.bad(
+            "pkg new on an existing package: exit {}, expected a refusal".format(clobber.status)
+        )
+    if existing_before and existing_before == existing_after:
+        suite.ok("the existing package is byte-identical after the refusal")
+    else:
+        suite.bad(
+            "pkg new changed an existing package: {} -> {}".format(
+                existing_before or "missing", existing_after or "missing"
+            )
+        )
+
+
+def step_persistence(suite: Suite) -> None:
+    suite.step("Persistence across container recreation")
+    suite.must(suite.compose_argv(["up", "-d", "--force-recreate", "desktop"]))
+    suite.wait("5")
+    if suite.in_desktop("[ -f /workspace/src/smoke_pkg/package.xml ]").status == 0:
+        suite.ok("workspace source survives container recreation")
+    else:
+        suite.bad("workspace source was lost when the container was recreated")
+    overlay = suite.capture("ros2 run smoke_pkg smoke_node")
+    if contains(overlay, "smoke_pkg overlay works"):
+        suite.ok("built overlay survives container recreation")
+    else:
+        suite.bad("built overlay was lost when the container was recreated")
+
+
+def step_result(suite: Suite) -> int:
+    suite.step("Result")
+    suite.say("{} passed, {} failed".format(suite.passed, suite.failed))
+    if suite.failed > 0:
+        suite.say("failed checks:")
+        for name in suite.failures:
+            suite.say("  - {}".format(name))
+        return 1
+    return 0
+
+
+def run_suite(suite: Suite, domain: str, novnc_port: str) -> int:
+    step_build(suite)
+    step_start_the_desktop(suite)
+    step_image_and_environment(suite, domain)
+    step_turtlesim(suite)
+    step_browser_desktop(suite, novnc_port)
+    step_cross_service_dds(suite)
+    step_package_installation(suite)
+    step_source_workspace_build(suite)
+    step_pkg_helper(suite)
+    step_student_make_targets(suite)
+    step_container_helpers(suite)
+    step_persistence(suite)
+    return step_result(suite)
+
+
+# --- entry point ------------------------------------------------------------
+
+
+def compose_command() -> Optional[str]:
+    """The compose command COMPOSE names, or the one this host offers."""
+    from_env = os.environ.get("COMPOSE", "")
+    if from_env:
+        return from_env
+    found = subprocess.run(
+        [str(REPO / "scripts" / "compose-command")], stdout=subprocess.PIPE, check=False
+    )
+    if found.returncode != 0:
+        subprocess.run([str(REPO / "scripts" / "compose-command"), "--explain"], check=False)
+        return None
+    return substitution(found.stdout.decode("utf-8", errors="replace"))
+
+
+def die_on_signal(signum: int, _frame: object) -> None:
+    """Turn SIGTERM/SIGHUP into an orderly exit, so cleanup still runs."""
+    raise Abort(128 + signum)
+
+
+def main(argv: Sequence[str]) -> int:
+    os.chdir(str(REPO))
+
+    base = compose_command()
+    if base is None:
+        return 1
+
+    # The self-test runs as its OWN compose project: own volumes, own network,
+    # own host port.  Its cleanup deletes volumes, so it must never share them
+    # with a student's real workstation -- and before this, it did: running
+    # `make selftest` "because something looked wrong" destroyed the student's
+    # /workspace.
+    project = os.environ.get("SELFTEST_PROJECT") or "ros2-tutorials-selftest"
+    compose_text = "{} -p {}".format(base, project)
+    # Exported so the `make package`/`make build` checks below, which run make
+    # as a student would, address this project too rather than the student's.
+    os.environ["COMPOSE"] = compose_text
+    # A separate host port lets the self-test run beside a student's own
+    # desktop on 6080.  Inside the container, noVNC always listens on 6080.
+    novnc_port = os.environ.get("SELFTEST_NOVNC_PORT") or "6081"
+    os.environ["NOVNC_PORT"] = novnc_port
+    # Its own ROS domain as well.  On Podman 3.x every container lands on
+    # Podman's default network whatever compose.yaml declares, so with a shared
+    # domain the self-test's nodes appear in a student's ROS graph and theirs in
+    # ours -- and a student's own talker could satisfy the DDS check below.
+    # compose.yaml reads ROS_DOMAIN_ID from the environment.
+    domain = os.environ.get("SELFTEST_ROS_DOMAIN_ID") or "99"
+    os.environ["ROS_DOMAIN_ID"] = domain
+
+    suite = Suite(compose_text, keep=bool(argv) and argv[0] == "--keep")
+    suite.say(
+        "using: {}  (isolated project; host port {})".format(compose_text, novnc_port)
+    )
+
+    status = 0
+    try:
+        status = run_suite(suite, domain, novnc_port)
+    except Abort as abort:
+        status = abort.status
+    except KeyboardInterrupt:
+        status = 130
+    finally:
+        suite.cleanup()
+    return status
+
+
+if __name__ == "__main__":
+    # A closed output pipe (`... | head -3`) ends the run the way it ended the
+    # shell version: by the default SIGPIPE, not by a traceback.
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(_sig, die_on_signal)
+    sys.exit(main(sys.argv[1:]))

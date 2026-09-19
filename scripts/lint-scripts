@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""Lint every script in the repository, choosing the linter by shebang.
+
+Shell scripts go through shellcheck; Python scripts are parsed, host-side ones
+against the Python 3.9 grammar that macOS's Command Line Tools ship. A file
+that is neither is a failure, never a skip, and so is being unable to run
+shellcheck at all: a skipped check must not look like a pass.
+
+Stdlib only, Python 3.9-compatible (this file checks itself).
+"""
+
+import ast
+import fnmatch
+import shlex
+import shutil
+import subprocess
+import sys
+from enum import Enum
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Sequence, Tuple
+
+REPO = Path(__file__).resolve().parent.parent
+
+# Directories whose every regular file is a script, plus scripts elsewhere.
+SCRIPT_DIRS = ("scripts", "docker/scripts")
+EXTRA_SCRIPTS = ("docker/entrypoint.sh", "docker/desktop/openbox-autostart")
+SOURCED_BASH = "docker/bashrc.d/*.sh"  # sourced by bash; no shebang
+HOST_TESTS = "tests/host/*.py"  # unittest modules; imported, so no shebang
+
+# Shell files that stay shell permanently, so their shellcheck findings fail
+# the lint. Every other shell file is slated for the Python port and is
+# advisory only. See docs/roadmap.md, "Language: Python replaces shell".
+ENFORCED_SHELL = ("docker/entrypoint.sh", SOURCED_BASH, "docker/desktop/openbox-autostart")
+
+# Host-side scripts, and the tests that run beside them on a student's or a
+# contributor's machine, must parse as Python 3.9 (docs/roadmap.md).
+HOST_DIRS = ("scripts/", "tests/host/")
+HOST_PYTHON = (3, 9)
+
+SHELLCHECK_IMAGE = "docker.io/koalaman/shellcheck:v0.11.0"
+
+
+class Kind(Enum):
+    SHELL = "shell"
+    SOURCED_BASH = "bash (sourced)"
+    PYTHON = "python"
+    UNCLASSIFIABLE = "unclassifiable"
+
+
+class Verdict(Enum):
+    OK = "ok"
+    FAIL = "FAIL"
+    ADVISORY = "advisory"
+
+
+class Result(NamedTuple):
+    path: str
+    label: str
+    verdict: Verdict
+    detail: str  # findings or an explanation; empty when there is nothing to say
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def interpreter(first_line: str) -> Optional[str]:
+    """The interpreter a shebang names, e.g. 'bash' or 'python3', else None."""
+    if not first_line.startswith("#!"):
+        return None
+    words = first_line[2:].split()
+    if not words:
+        return None
+    name = words[0].rsplit("/", 1)[-1]
+    if name == "env":
+        args = [w for w in words[1:] if not w.startswith("-")]
+        return args[0] if args else None
+    return name
+
+
+def classify(path: str, first_line: str) -> Kind:
+    if fnmatch.fnmatch(path, SOURCED_BASH):
+        return Kind.SOURCED_BASH
+    if fnmatch.fnmatch(path, HOST_TESTS):
+        return Kind.PYTHON
+    name = interpreter(first_line)
+    if name in ("sh", "bash"):
+        return Kind.SHELL
+    if name == "python3":
+        return Kind.PYTHON
+    return Kind.UNCLASSIFIABLE
+
+
+def is_enforced(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in ENFORCED_SHELL)
+
+
+def is_host(path: str) -> bool:
+    return path.startswith(HOST_DIRS)
+
+
+def check_python(path: str, source: str) -> Result:
+    if is_host(path):
+        label = "python, host (3.9 grammar)"
+        try:
+            ast.parse(source, path, feature_version=HOST_PYTHON)
+        except SyntaxError as err:
+            return Result(path, label, Verdict.FAIL,
+                          "needs Python newer than 3.9, or is invalid: {}".format(err))
+    else:
+        label = "python, container"
+        try:
+            ast.parse(source, path)
+        except SyntaxError as err:
+            return Result(path, label, Verdict.FAIL, "syntax error: {}".format(err))
+    return Result(path, label, Verdict.OK, "")
+
+
+def shellcheck_argv(runner: Sequence[str], path: str, kind: Kind) -> List[str]:
+    argv = list(runner) + ["--severity=warning"]
+    if kind is Kind.SOURCED_BASH:
+        argv.append("--shell=bash")
+    return argv + [path]
+
+
+def judge_shellcheck(path: str, kind: Kind, status: int, stdout: str, stderr: str) -> Result:
+    """shellcheck exits 0 when clean, 1 with findings, anything else when it did not run."""
+    enforced = is_enforced(path)
+    label = "{}, {}".format(kind.value, "enforced" if enforced else "advisory")
+    if status == 0:
+        return Result(path, label, Verdict.OK, "")
+    if status == 1:
+        return Result(path, label, Verdict.FAIL if enforced else Verdict.ADVISORY, stdout.strip())
+    return Result(path, label, Verdict.FAIL,
+                  "shellcheck did not run (exit {}):\n{}".format(status, (stderr or stdout).strip()))
+
+
+def unrunnable(path: str, kind: Kind, why: str) -> Result:
+    label = "{}, {}".format(kind.value, "enforced" if is_enforced(path) else "advisory")
+    return Result(path, label, Verdict.FAIL, "shell linting could not run: " + why)
+
+
+def unclassifiable(path: str, first_line: str) -> Result:
+    return Result(path, Kind.UNCLASSIFIABLE.value, Verdict.FAIL,
+                  "first line {!r} names neither sh, bash, nor python3".format(first_line))
+
+
+def render(results: Sequence[Result]) -> str:
+    width = max((len(r.path) for r in results), default=0)
+    lines = []
+    for r in results:
+        lines.append("{:<8} {:<{w}}  {}".format(r.verdict.value, r.path, r.label, w=width))
+        if r.detail:
+            if r.verdict is Verdict.ADVISORY:
+                lines.append("    advisory findings (not failing; slated for the Python port):")
+            lines.extend(("    " + line).rstrip() for line in r.detail.splitlines())
+    counts = {v: sum(1 for r in results if r.verdict is v) for v in Verdict}
+    lines.append("lint-scripts: {} files: {} ok, {} advisory, {} FAIL".format(
+        len(results), counts[Verdict.OK], counts[Verdict.ADVISORY], counts[Verdict.FAIL]))
+    return "\n".join(lines)
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def discover(repo: Path) -> List[str]:
+    found = set()
+    for d in SCRIPT_DIRS:
+        found.update(p for p in (repo / d).iterdir() if p.is_file())
+    found.update(repo / p for p in EXTRA_SCRIPTS)
+    found.update(repo.glob(SOURCED_BASH))
+    found.update(repo.glob(HOST_TESTS))
+    return sorted(p.relative_to(repo).as_posix() for p in found)
+
+
+def find_shellcheck(repo: Path) -> Tuple[Optional[List[str]], str]:
+    """argv prefix that runs shellcheck with the repo as its working directory, or (None, why)."""
+    if shutil.which("shellcheck"):
+        return ["shellcheck"], ""
+    probe = subprocess.run([str(repo / "scripts" / "compose-command"), "--engine"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, check=False)
+    engine = probe.stdout.strip()
+    if probe.returncode != 0 or engine not in ("docker", "podman"):
+        return None, ("no shellcheck on PATH, and no container engine to run it in "
+                      "(scripts/compose-command --engine found none)")
+    return [engine, "run", "--rm", "-v", "{}:/mnt:ro".format(repo), "-w", "/mnt",
+            SHELLCHECK_IMAGE], ""
+
+
+def lint(repo: Path) -> List[Result]:
+    results = []
+    runner = None  # type: Optional[List[str]]
+    why = ""
+    located = False
+    for path in discover(repo):
+        text = (repo / path).read_bytes().decode("utf-8", errors="replace")
+        first_line = text.split("\n", 1)[0].rstrip("\r")
+        kind = classify(path, first_line)
+        if kind is Kind.UNCLASSIFIABLE:
+            results.append(unclassifiable(path, first_line))
+        elif kind is Kind.PYTHON:
+            results.append(check_python(path, text))
+        else:
+            if not located:
+                runner, why = find_shellcheck(repo)
+                located = True
+                if runner is not None:
+                    print("shellcheck via: " + shlex.join(runner), flush=True)
+            if runner is None:
+                results.append(unrunnable(path, kind, why))
+                continue
+            proc = subprocess.run(shellcheck_argv(runner, path, kind), cwd=str(repo),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  universal_newlines=True, check=False)
+            results.append(judge_shellcheck(path, kind, proc.returncode, proc.stdout, proc.stderr))
+    if located and runner is None:
+        print("lint-scripts: shell linting could not run: " + why, file=sys.stderr)
+    return results
+
+
+def main() -> int:
+    results = lint(REPO)
+    print(render(results))
+    return 1 if any(r.verdict is Verdict.FAIL for r in results) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
