@@ -105,6 +105,8 @@ def groups(url: str) -> Tuple[Group, ...]:
                 "Validate compose.yaml and lint every script (shellcheck, Python 3.9)", None),
             Row("make digest", "Print the base-image digest to pin", None),
             Row("make reset", "Delete containers AND volumes -- destructive, asks first", None),
+            Row("make uninstall",
+                "Remove it all, images too, to free the disk -- asks first", None),
         )),
     )
 
