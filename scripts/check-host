@@ -119,6 +119,24 @@ def parse_meminfo_kb(text: str) -> Optional[int]:
     return None
 
 
+def parse_byte_count(text: str) -> Optional[int]:
+    """A bare byte count, as `info --format` and `sysctl -n` print one, in kB."""
+    try:
+        count = int(text.strip())
+    except ValueError:
+        return None
+    return count // 1024 if count > 0 else None
+
+
+def engine_memory_format(engine: Optional[Engine]) -> Optional[str]:
+    """The `info --format` template naming the engine's total memory."""
+    if engine is Engine.DOCKER:
+        return "{{.MemTotal}}"
+    if engine is Engine.PODMAN:
+        return "{{.Host.MemTotal}}"
+    return None
+
+
 def gigabytes(kilobytes: int) -> int:
     return kilobytes // 1024 // 1024
 
@@ -167,8 +185,8 @@ def engine_version(name: str) -> str:
     return fallback.split("\n", 1)[0]
 
 
-def report_engine(out: List[str]) -> int:
-    """The 'Container engine' section.  Returns 0 when an engine was found."""
+def report_engine(out: List[str]) -> Tuple[int, Optional[Engine]]:
+    """The 'Container engine' section.  Status 0, and the engine, when one was found."""
     compose = capture([str(COMPOSE_COMMAND)])
     if compose is None:
         out.append(miss("no working docker or podman compose"))
@@ -176,14 +194,15 @@ def report_engine(out: List[str]) -> int:
         _, explanation = run_for_output([str(COMPOSE_COMMAND), "--explain"], keep_stderr=True)
         out.extend(quoted(explanation))
         out.append(fix("see docs/host-requirements.md"))
-        return 1
+        return 1, None
 
     out.append(ok("compose: {}".format(stripped(compose))))
     name = stripped(capture([str(COMPOSE_COMMAND), "--engine"]))
     version = engine_version(name)
     out.append(ok("engine:  {} {}".format(name, version)))
 
-    if Engine.parse(name) is Engine.PODMAN:
+    engine = Engine.parse(name)
+    if engine is Engine.PODMAN:
         major = major_version(version)
         if major is not None and major < 4:
             out.append(warn(
@@ -195,23 +214,43 @@ def report_engine(out: List[str]) -> int:
             out.append(ok("podman is running rootless"))
         else:
             out.append(warn("podman is running as root; rootless is recommended"))
-    return 0
+    return 0, engine
 
 
-def report_resources(out: List[str]) -> None:
-    """The 'Resources' section.  A measurement that cannot be taken is left out."""
-    disk = capture(["df", "-Pk", "."])
-    if disk is not None:
-        disk_kb = parse_df_available_kb(disk)
-        if disk_kb is not None:
-            out.append(resource_line("disk free", gigabytes(disk_kb), DISK_GB_WANTED))
+def memory_kb(engine: Optional[Engine]) -> Tuple[Optional[int], str]:
+    """Total memory in kB and the label to report it under, from the first source
+    that answers.
+
+    Linux has /proc/meminfo.  macOS does not, and there the engine runs in a VM
+    with a memory limit of its own, so the engine is asked before the host is.
+    """
     try:
         meminfo = MEMINFO.read_text(errors="replace")
     except OSError:
         meminfo = ""
     mem_kb = parse_meminfo_kb(meminfo)
     if mem_kb is not None:
-        out.append(resource_line("memory", gigabytes(mem_kb), MEMORY_GB_WANTED))
+        return mem_kb, "memory"
+
+    template = engine_memory_format(engine)
+    if engine is not None and template is not None:
+        mem_kb = parse_byte_count(stripped(capture([engine.value, "info", "--format", template])))
+        if mem_kb is not None:
+            return mem_kb, "memory ({}'s VM)".format(engine.value)
+
+    return parse_byte_count(stripped(capture(["sysctl", "-n", "hw.memsize"]))), "memory"
+
+
+def report_resources(out: List[str], engine: Optional[Engine]) -> None:
+    """The 'Resources' section.  A measurement that cannot be taken is left out."""
+    disk = capture(["df", "-Pk", "."])
+    if disk is not None:
+        disk_kb = parse_df_available_kb(disk)
+        if disk_kb is not None:
+            out.append(resource_line("disk free", gigabytes(disk_kb), DISK_GB_WANTED))
+    mem_kb, label = memory_kb(engine)
+    if mem_kb is not None:
+        out.append(resource_line(label, gigabytes(mem_kb), MEMORY_GB_WANTED))
 
 
 def main() -> int:
@@ -221,11 +260,11 @@ def main() -> int:
 
     out = []  # type: List[str]
     out.append("Container engine")
-    status = report_engine(out)
+    status, engine = report_engine(out)
 
     out.append("")
     out.append("Resources")
-    report_resources(out)
+    report_resources(out, engine)
 
     out.append("")
     if status == 0:

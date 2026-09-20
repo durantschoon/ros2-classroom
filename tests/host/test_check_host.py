@@ -5,14 +5,21 @@ pinned on exact text.  The resource lines are pinned on shape only: their
 numbers are the machine's.
 """
 
+import shutil
 import unittest
+from pathlib import Path
 
-from fakes import ScriptTestCase, rule
+from fakes import REAL_PATH, ScriptTestCase, rule
 
 DOCKER_VERSION = [
     rule(["compose", "version"], stdout="Docker Compose version v2.24.5\n"),
     rule(["version", "--format", "{{.Client.Version}}"], stdout="24.0.7\n"),
 ]
+DOCKER_MEMORY = rule(["info", "--format", "{{.MemTotal}}"], stdout="8393289728\n")
+
+# Where /proc/meminfo exists it answers first, and the fallbacks never run.
+HAS_MEMINFO = Path("/proc/meminfo").exists()
+HAS_SYSCTL = shutil.which("sysctl", path=REAL_PATH) is not None
 
 
 class CheckHostTests(ScriptTestCase):
@@ -103,10 +110,29 @@ class CheckHostTests(ScriptTestCase):
     # --- resources ---------------------------------------------------------
 
     def test_the_resource_lines_have_the_documented_shape(self):
-        self.sandbox.fake("docker", rules=DOCKER_VERSION, exit_code=1)
+        self.sandbox.fake("docker", rules=DOCKER_VERSION + [DOCKER_MEMORY], exit_code=1)
         run = self.run_script()
         self.assertHas(run, "Resources")
         self.assertRegex(run.out, r"\n  (ok|warn)  +disk free: \d+ GB", run.report())
+        self.assertRegex(run.out, r"\n  (ok|warn)  +memory( \([^)]+\))?: \d+ GB", run.report())
+
+    @unittest.skipIf(HAS_MEMINFO, "this host has /proc/meminfo, which answers first")
+    def test_without_meminfo_the_engine_reports_its_own_memory(self):
+        self.sandbox.fake("docker", rules=DOCKER_VERSION + [DOCKER_MEMORY], exit_code=1)
+        self.assertHas(self.run_script(), "  ok    memory (docker's VM): 7 GB")
+
+    @unittest.skipIf(HAS_MEMINFO, "this host has /proc/meminfo, which answers first")
+    def test_a_small_engine_vm_is_warned_about(self):
+        small = rule(["info", "--format", "{{.MemTotal}}"], stdout="2147483648\n")
+        self.sandbox.fake("docker", rules=DOCKER_VERSION + [small], exit_code=1)
+        self.assertHas(self.run_script(),
+                       "  warn  memory (docker's VM): 2 GB (4 GB recommended)")
+
+    @unittest.skipIf(HAS_MEMINFO or not HAS_SYSCTL, "needs a host with sysctl and no /proc/meminfo")
+    def test_an_engine_that_will_not_say_falls_back_to_sysctl(self):
+        self.sandbox.fake("docker", rules=DOCKER_VERSION, exit_code=1)
+        self.sandbox.link("sysctl")
+        run = self.run_script()
         self.assertRegex(run.out, r"\n  (ok|warn)  +memory: \d+ GB", run.report())
 
     def test_the_sections_come_in_order(self):
