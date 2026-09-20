@@ -31,8 +31,9 @@ targets don't work in there, and it will tell you so if you try.
 
 **If the page says "Disconnected"**, that's normal after sleep or a network
 blip — it reconnects by itself and nothing in the desktop stops. The small tab
-on the page's left edge opens a panel whose **Clipboard** button pastes text
-into the desktop.
+on the page's left edge opens a panel whose **Clipboard** button puts text
+into the desktop; press **Ctrl+Shift+V** in a desktop terminal to paste it
+(Ctrl, not Cmd, on a Mac).
 
 Once turtlesim runs, move on to your own code:
 

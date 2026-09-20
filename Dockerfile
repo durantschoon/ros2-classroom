@@ -127,6 +127,7 @@ COPY docker/desktop/welcome.txt /usr/share/ros-workstation/welcome.txt
 COPY docker/supervisord.conf /etc/supervisor/conf.d/ros-desktop.conf
 COPY docker/desktop/openbox-autostart /etc/xdg/openbox/autostart
 COPY docker/desktop/menu.xml /etc/xdg/openbox/menu.xml
+COPY docker/desktop/app-defaults/ /usr/share/ros-workstation/app-defaults/
 
 # /etc/profile.d covers login shells (bash -lc); the /etc/bash.bashrc.d loop
 # covers interactive ones.  One file, both routes, guarded against double use.
@@ -144,6 +145,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint \
 ENV USER_NAME=${USER_NAME} \
     WORKSPACE=/workspace \
     DISPLAY=:1 \
+    XAPPLRESDIR=/usr/share/ros-workstation/app-defaults/ \
     SCREEN_GEOMETRY=1600x900x24 \
     NOVNC_PORT=6080 \
     VNC_PORT=5900 \
