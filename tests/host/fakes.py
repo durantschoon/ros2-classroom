@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -201,8 +202,13 @@ class Sandbox:
         self.bin.mkdir(parents=True)
         self.calls.mkdir(parents=True)
         (root / "home").mkdir()
-        # The fakes' own interpreter, named by their `#!/usr/bin/env python3`.
-        self.link("python3")
+        # The interpreter behind every `#!/usr/bin/env python3`: the fakes' and
+        # the scripts' under test.  It is the one running this suite, not
+        # whatever `python3` is first on PATH, for two reasons.  A pyenv or asdf
+        # shim there is a bash script, and the sandbox has no bash.  And a suite
+        # run as `python3.9 -m unittest` to check the 3.9 floor should run the
+        # scripts under 3.9 too, which a PATH lookup does not promise.
+        (self.bin / "python3").symlink_to(sys.executable)
 
     def link(self, *names: str) -> None:
         """Make the real system tool of each name reachable on the sandbox PATH."""
