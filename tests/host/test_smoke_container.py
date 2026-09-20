@@ -242,6 +242,9 @@ PODMAN_RULES: Sequence[Dict[str, object]] = (
 # exact-argument rule addresses the probe and nothing else.
 NEVER_READY = (rule(["true"], exit_code=1, match="all"),)
 
+# `compose up` fails outright, as it does when the host port is already taken.
+UP_FAILS = (rule(["up", "-d", "desktop"], exit_code=1, match="all"),)
+
 
 def ready_after(tries: int) -> Sequence[Dict[str, object]]:
     """Fail the readiness probe `tries` times, then let it through."""
@@ -675,6 +678,21 @@ class Cleanup(SmokeTest):
         self.assertIn("desktop container never became ready", case.run.out, case.report())
         self.assertNotIn(" passed, ", case.run.out, case.report())
         self.assertTornDown(case)
+
+    def test_a_desktop_that_will_not_start_names_the_port_and_the_way_round_it(self) -> None:
+        # What a busy host port looks like: `compose up` itself fails.
+        case = scenario("up_fails", compose_rules=UP_FAILS)
+        self.assertEqual(1, case.run.status, case.report())
+        self.assertIn("something else is using host port 6081.", case.run.out, case.report())
+        self.assertIn("  SELFTEST_NOVNC_PORT=6082 make selftest", case.run.out, case.report())
+        self.assertNotIn(" passed, ", case.run.out, case.report())
+        self.assertTornDown(case)
+
+    def test_the_suggested_port_follows_an_overridden_one(self) -> None:
+        case = scenario("up_fails_other_port", compose_rules=UP_FAILS,
+                        SELFTEST_NOVNC_PORT="6099")
+        self.assertIn("something else is using host port 6099.", case.run.out, case.report())
+        self.assertIn("  SELFTEST_NOVNC_PORT=6100 make selftest", case.run.out, case.report())
 
     def test_the_teardown_deletes_volumes_only_inside_the_selftest_project(self) -> None:
         for case in (all_fail(), all_pass()):

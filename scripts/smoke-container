@@ -354,9 +354,27 @@ def step_build(suite: Suite) -> None:
     suite.ok("image builds")
 
 
+def next_port(port: str) -> str:
+    """The port after this one, to suggest; the port itself when it is no number."""
+    try:
+        return str(int(port) + 1)
+    except ValueError:
+        return port
+
+
 def step_start_the_desktop(suite: Suite) -> None:
     suite.step("Start the desktop")
-    suite.must(suite.compose_argv(["up", "-d", "desktop"]))
+    started = suite.run(suite.compose_argv(["up", "-d", "desktop"]))
+    if started.status != 0:
+        # By far the likeliest cause: the host port is taken, often by a
+        # student's own desktop moved off a busy 6080 to the next port up.
+        port = os.environ.get("NOVNC_PORT", "")
+        suite.say()
+        suite.say("The self-test's desktop did not start. If the error above says the port")
+        suite.say("is already allocated, something else is using host port {}.".format(port))
+        suite.say("Give the self-test another one:")
+        suite.say("  SELFTEST_NOVNC_PORT={} make selftest".format(next_port(port)))
+        raise Abort(started.status)
 
     # Readiness is measured by the thing the rest of the suite needs -- exec
     # working -- rather than by `ps <service>`, which podman-compose does not
