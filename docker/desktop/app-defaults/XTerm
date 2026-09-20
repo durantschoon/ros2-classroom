@@ -1,0 +1,12 @@
+! Per-user X resources for every xterm in the desktop, found through
+! XAPPLRESDIR (set in the Dockerfile) so no xrdb is needed.
+!
+! Stock xterm pastes only on a middle-click or Shift+Insert.  A Mac trackpad
+! has no middle button and a Mac keyboard has no Insert key, so without these
+! a student there cannot paste what the noVNC Clipboard panel put in the
+! desktop.  Ctrl+Shift+V / Ctrl+Shift+C are what Linux terminals already use,
+! and they do not collide with the browser's own Cmd/Ctrl shortcuts.
+! Middle-click keeps working.
+XTerm*VT100.translations: #override \n\
+    Ctrl Shift <Key>V: insert-selection(CLIPBOARD, PRIMARY) \n\
+    Ctrl Shift <Key>C: copy-selection(CLIPBOARD)
