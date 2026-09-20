@@ -239,6 +239,31 @@ class ComposeUpTests(ScriptTestCase):
         self.sandbox.fake("compose-stub", exit_code=7)
         self.assertStatus(self.run_script(COMPOSE="compose-stub", ENGINE="podman"), 7)
 
+    def test_a_failed_up_names_the_port_and_a_free_one_to_try(self):
+        self.engine(image_id="sameid", container=CONTAINER, running_id="sameid")
+        self.sandbox.fake("compose-stub", exit_code=1)
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman")
+        self.assertStatus(run, 1)
+        self.assertHas(run, "something else is using host port 6080.", where="stderr")
+        # Not 6081: that is `make selftest`'s own port.
+        self.assertHas(run, "  make up NOVNC_PORT=6082 && make open NOVNC_PORT=6082",
+                       where="stderr")
+
+    def test_the_hint_follows_an_overridden_port(self):
+        self.engine(image_id="sameid", container=CONTAINER, running_id="sameid")
+        self.sandbox.fake("compose-stub", exit_code=1)
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman", NOVNC_PORT="7000")
+        self.assertHas(run, "something else is using host port 7000.", where="stderr")
+        self.assertHas(run, "  make up NOVNC_PORT=7001 && make open NOVNC_PORT=7001",
+                       where="stderr")
+
+    def test_a_successful_up_says_nothing_about_ports(self):
+        self.engine(image_id="sameid", container=CONTAINER, running_id="sameid")
+        self.compose()
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman")
+        self.assertStatus(run, 0)
+        self.assertLacks(run, "host port", where="stderr")
+
     # --- required environment ---------------------------------------------
 
     def test_an_unset_compose_fails_with_a_message(self):
