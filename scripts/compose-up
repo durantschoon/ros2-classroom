@@ -27,6 +27,12 @@ DEFAULT_ROS_DISTRO = "lyrical"
 # The `name:` in compose.yaml, used when nothing overrides the project.
 DEFAULT_PROJECT = "ros2-tutorials"
 
+# The host port compose.yaml publishes noVNC on when NOVNC_PORT is unset, and
+# the one `make selftest` takes for itself -- never suggested to a student,
+# whose next self-test would then collide with their own desktop.
+DEFAULT_NOVNC_PORT = "6080"
+SELFTEST_NOVNC_PORT = 6081
+
 # Both compose implementations set these labels on every container they create.
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -128,6 +134,33 @@ def echoed(compose: str, recreate: Sequence[str]) -> str:
     return "+ {} up -d{}".format(compose, tail)
 
 
+def port_to_suggest(port: str) -> str:
+    """The next host port up that is not the self-test's; "" when port is no number."""
+    try:
+        candidate = int(port) + 1
+    except ValueError:
+        return ""
+    if candidate == SELFTEST_NOVNC_PORT:
+        candidate += 1
+    return str(candidate)
+
+
+def busy_port_hint(port: str) -> List[str]:
+    """What to say when `up` fails: by far the likeliest cause is a taken port."""
+    lines = [
+        "",
+        "The desktop did not start. If the error above says the port is already",
+        "allocated, something else is using host port {}.".format(port),
+    ]
+    suggestion = port_to_suggest(port)
+    if suggestion:
+        lines += [
+            "Move the desktop to another one, and open it there:",
+            "  make up NOVNC_PORT={0} && make open NOVNC_PORT={0}".format(suggestion),
+        ]
+    return lines
+
+
 def first_line(text: str) -> str:
     return text.split("\n", 1)[0]
 
@@ -219,11 +252,19 @@ def main() -> int:
 
     print(echoed(compose, recreate), flush=True)
     argv = compose_words + ["up", "-d"] + recreate
+    # Run rather than exec'd, so that a failure can be explained afterwards.
     try:
-        os.execvp(argv[0], argv)
+        status = subprocess.run(argv, check=False).returncode
     except OSError as err:
         print("compose-up: {}: {}".format(argv[0], err.strerror), file=sys.stderr)
-    return EXIT_NOT_RUN
+        return EXIT_NOT_RUN
+    except KeyboardInterrupt:
+        return 130
+    if status != 0:
+        for line in busy_port_hint(os.environ.get("NOVNC_PORT") or DEFAULT_NOVNC_PORT):
+            print(line, file=sys.stderr)
+    # A compose killed by a signal reports -N; the shell convention is 128+N.
+    return status if status >= 0 else 128 - status
 
 
 if __name__ == "__main__":
