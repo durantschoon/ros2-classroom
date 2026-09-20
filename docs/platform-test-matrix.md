@@ -27,10 +27,13 @@ status, disk and RAM, and names the fix for anything missing.
 
 ## A. macOS (Apple Silicon)
 
-**Engine: use Docker here.** Docker Desktop is already installed on this Mac,
-and that makes it the most valuable run on the whole checklist: every real run
-so far has been Podman on WSL, so the Docker paths in the host scripts have only
-ever met the *fake* `docker` in the tests. This is their first real one.
+**Engine: use Docker here** -- Docker Desktop, OrbStack, or Colima; anything
+that gives a real `docker compose`. Until the 2026-09-19 run below (OrbStack),
+every real run had been Podman on WSL, and the Docker paths in the host scripts
+had only ever met the *fake* `docker` in the tests.
+
+If port 6080 is busy, `make up NOVNC_PORT=6081` moves the desktop -- but 6081 is
+`make selftest`'s own default, so then run `SELFTEST_NOVNC_PORT=6082 make selftest`.
 
 - [ ] `make engine` says `docker compose`, not podman
 - [ ] `python3 --version` — expect 3.9, from the Command Line Tools. That is the
@@ -165,7 +168,7 @@ ros_distro:     lyrical
 | Machine | Decision points | Date | `make selftest` | Manual steps | Notes |
 |---|---|---|---|---|---|
 | WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ arrow keys ☐ | podman-compose 1.6.0; image 3.1 GB |
-| macOS, OrbStack | `macos-27 / arm64 / native / brew / docker / headless / — / direct / lyrical` | 2026-09-19 | 48/48 | desktop ☑ turtlesim ☑ arrow keys ☑ reconnect ☑ clipboard ☑ | first real `docker compose` run. Docker 29.4.0 from OrbStack, not Docker Desktop; image 4.31 GB, `arm64`. `make check` 188/188 on Python 3.12 and 3.9. Found and fixed: `make doctor` had no memory line (no `/proc/meminfo`); xterm could not paste without a middle button (now Ctrl+Shift+V). Port 6080 was held by another project, so ran with `NOVNC_PORT=6081`, which is `make selftest`'s default port: `SELFTEST_NOVNC_PORT=6082`. `make logs` streams. `make uninstall` removed a running desktop, both volumes, the network, and both images, left three unrelated containers alone, and a second run found nothing to remove |
+| macOS, OrbStack | `macos-27 / arm64 / native / brew / docker / headless / — / direct / lyrical` | 2026-09-19 | 48/48 | desktop ☑ turtlesim ☑ arrow keys ☑ reconnect ☑ clipboard ☑ | first real `docker compose` run. Docker 29.4.0 from OrbStack, not Docker Desktop; image 4.31 GB, `arm64`. `make check` 190/190 on Python 3.12 and on the system 3.9. Found and fixed: `make doctor` had no memory line (no `/proc/meminfo`); xterm could not paste without a middle button (now Ctrl+Shift+V). Port 6080 was held by another project, so ran with `NOVNC_PORT=6081`, which is `make selftest`'s default port: `SELFTEST_NOVNC_PORT=6082`. `make logs` streams. `make uninstall` removed a running desktop, both volumes, the network, and both images, left three unrelated containers alone, and a second run found nothing to remove |
 | Windows 11 (WSL shell) | | | | ☐ | |
 | Windows 11 (PowerShell) | | | | ☐ | |
 | Pure Linux | | | | ☐ | |
