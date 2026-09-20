@@ -198,8 +198,11 @@ reconnects on its own, and nothing in the desktop was lost. If it does not come
 back within half a minute, check the desktop is still up with `make ps`.
 
 **Pasting into the desktop does nothing.** Use the Clipboard button in the
-side panel (the tab on the page's left edge): paste your text there, then paste
-inside the desktop as usual.
+side panel (the tab on the page's left edge): paste your text there, then press
+**Ctrl+Shift+V** in a desktop terminal. That is Ctrl even on a Mac, where Cmd+V
+belongs to the browser. A middle-click pastes too, if your mouse has one; a Mac
+trackpad does not, which is why the keys exist. Ctrl+Shift+C copies the
+terminal's selection back out to the Clipboard panel.
 
 **The browser shows "failed to connect".** The desktop takes a few seconds to
 start. Check `docker compose ps` for the health status and `make logs` for

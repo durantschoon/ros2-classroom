@@ -46,8 +46,9 @@ ever met the *fake* `docker` in the tests. This is their first real one.
 - [ ] Right-click → turtle_teleop_key, click it, **arrow keys move the turtle**
 - [ ] **Reconnect**: close and reopen the tab (or sleep the machine) — the page
       reconnects by itself and turtlesim is still running
-- [ ] **Clipboard**: paste a command into the desktop terminal via the side
-      panel's Clipboard button, and run it
+- [ ] **Clipboard**: put a command in the side panel's Clipboard box, press
+      Ctrl+Shift+V (Ctrl, not Cmd) in the desktop terminal, and run it. A
+      trackpad has no middle button, so this is the only way to paste
 - [ ] `install-ros-packages demo-nodes-cpp` succeeds in the desktop terminal
 - [ ] `tutorial clone https://github.com/ros/ros_tutorials.git && tutorial deps && tutorial build`
 - [ ] `make down && make up` — `/workspace/src` still has the clone
@@ -164,7 +165,7 @@ ros_distro:     lyrical
 | Machine | Decision points | Date | `make selftest` | Manual steps | Notes |
 |---|---|---|---|---|---|
 | WSL 2 Ubuntu 22.04 | `windows-11 / amd64 / wsl2 / apt / podman-3 / wslg / — / direct / lyrical` | 2026-09-17 | 20/20 | desktop ☑ turtlesim ☑ arrow keys ☐ | podman-compose 1.6.0; image 3.1 GB |
-| macOS, Docker Desktop | | | | ☐ | first real `docker compose` run; record `make check` too |
+| macOS, OrbStack | `macos-27 / arm64 / native / brew / docker / headless / — / direct / lyrical` | 2026-09-19 | 48/48 | desktop ☑ turtlesim ☑ arrow keys ☑ reconnect ☑ clipboard ☑ | first real `docker compose` run. Docker 29.4.0 from OrbStack, not Docker Desktop; image 4.31 GB, `arm64`. `make check` 188/188 on Python 3.12 and 3.9. Found and fixed: `make doctor` had no memory line (no `/proc/meminfo`); xterm could not paste without a middle button (now Ctrl+Shift+V). Port 6080 was held by another project, so ran with `NOVNC_PORT=6081`, which is `make selftest`'s default port: `SELFTEST_NOVNC_PORT=6082`. `make logs` streams. `make uninstall` removed a running desktop, both volumes, the network, and both images, left three unrelated containers alone, and a second run found nothing to remove |
 | Windows 11 (WSL shell) | | | | ☐ | |
 | Windows 11 (PowerShell) | | | | ☐ | |
 | Pure Linux | | | | ☐ | |
