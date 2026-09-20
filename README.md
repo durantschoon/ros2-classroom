@@ -1,4 +1,10 @@
-# ROS 2 cross-platform tutorial workstation
+# ros2-classroom: a ROS 2 tutorial workstation for a room of mixed laptops
+
+Built for teaching: every student gets the same ROS 2 desktop in their browser,
+whatever they brought, with nothing to install but a container engine.
+`make doctor` says what a machine is missing and how to fix it, `make selftest`
+proves the workstation works before class does, and `make uninstall` gives the
+disk space back afterwards.
 
 One Docker image that runs ROS 2 tutorials on Linux, macOS, and Windows. The
 graphical desktop is rendered inside the container and served to your browser

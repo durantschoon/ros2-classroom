@@ -25,7 +25,7 @@ ARG EXTRA_APT_PACKAGES=""
 
 LABEL org.opencontainers.image.title="ROS 2 tutorial workstation" \
       org.opencontainers.image.description="ROS 2 turtlesim and tutorial workstation with a browser desktop" \
-      org.opencontainers.image.source="https://github.com/durantschoon/ros2_turtlesim" \
+      org.opencontainers.image.source="https://github.com/durantschoon/ros2-classroom" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
