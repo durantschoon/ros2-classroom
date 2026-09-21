@@ -14,3 +14,6 @@ workspace-src/
 
 # Python bytecode, e.g. from `make check`.
 __pycache__/
+
+# Logs from local job runners (tmux-run, launchd-run).
+logs/
