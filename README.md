@@ -64,13 +64,14 @@ Then, in the browser desktop:
 - right-click again → **turtle_teleop_key**, click that window, and use the
   arrow keys.
 
-Without Make (for example on Windows PowerShell; substitute `podman compose`
-for `docker compose` if that is what you have):
+**On Windows:** Double-click `ros2.bat` to launch the desktop and open the browser automatically. 
+To run commands from PowerShell, use `.\ros2.ps1`:
 
 ```powershell
-docker compose build
-docker compose up -d
-# browse to http://localhost:6080/vnc.html?autoconnect=1&resize=remote&reconnect=true
+.\ros2.ps1 package -Pkg my_robot -Template pubsub
+.\ros2.ps1 build -Pkg my_robot
+.\ros2.ps1 run -Pkg my_robot -Node talker
+.\ros2.ps1 test -Pkg my_robot
 ```
 
 ## Commands
