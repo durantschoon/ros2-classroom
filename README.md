@@ -64,7 +64,7 @@ Then, in the browser desktop:
 - right-click again → **turtle_teleop_key**, click that window, and use the
   arrow keys.
 
-**On Windows:** Double-click `ros2.bat` to launch the desktop and open the browser automatically. 
+**On Windows:** Download and start [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) first (make sure Docker Desktop is open and running). Once Docker is running, double-click `ros2.bat` to launch the desktop and open the browser automatically. 
 To run commands from PowerShell, use `.\ros2.ps1`:
 
 ```powershell

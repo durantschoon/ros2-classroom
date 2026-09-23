@@ -6,29 +6,36 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$NovncPort = 6080
-$Url = "http://localhost:$NovncPort"
+
+# Ensure working directory is the repository root
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if ($scriptDir) {
+    Set-Location $scriptDir
+}
+
+$NovncPort = if ($env:NOVNC_PORT) { $env:NOVNC_PORT } else { 6080 }
+$Url = "http://127.0.0.1:$NovncPort"
 $DesktopUrl = "$Url/vnc.html?autoconnect=1&resize=remote&reconnect=true"
 $Service = "desktop"
 
 function Check-Docker {
-    try {
-        $dockerVersion = docker --version 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Docker is not installed or not in PATH." -ForegroundColor Red
-            Write-Host "Please install Docker Desktop from https://docs.docker.com/desktop/install/windows-install/"
-            exit 1
-        }
-        
-        docker info > $null 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Docker Desktop is installed but the Docker engine is not running." -ForegroundColor Red
-            Write-Host "Please start Docker Desktop from your Start Menu and try again."
-            exit 1
-        }
-    } catch {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Write-Host "Docker is not installed or not in PATH." -ForegroundColor Red
-        Write-Host "Please install Docker Desktop from https://docs.docker.com/desktop/install/windows-install/"
+        Write-Host "Prerequisite: Please download and install Docker Desktop for Windows from:" -ForegroundColor Yellow
+        Write-Host "  https://docs.docker.com/desktop/install/windows-install/"
+        Write-Host "After installation, open Docker Desktop, wait for it to start, and run this again." -ForegroundColor Yellow
+        exit 1
+    }
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    docker info > $null 2>&1
+    $daemonExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+
+    if ($daemonExit -ne 0) {
+        Write-Host "Docker Desktop is installed, but the Docker engine is not running." -ForegroundColor Red
+        Write-Host "Please start Docker Desktop from your Windows Start Menu, wait until it starts, and try again." -ForegroundColor Yellow
         exit 1
     }
 }
@@ -93,6 +100,7 @@ function Run-TurtlesimTeleop {
 }
 
 function Run-Package {
+    Check-Docker
     if (-not $Pkg) {
         Write-Host "usage: .\ros2.bat package -Pkg name [-Template pubsub]" -ForegroundColor Red
         exit 1
@@ -102,16 +110,19 @@ function Run-Package {
 }
 
 function Run-Build {
+    Check-Docker
     $pkgArg = if ($Pkg) { $Pkg } else { "" }
     docker compose exec -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $Service bash -lc "pkg build $pkgArg"
 }
 
 function Run-Test {
+    Check-Docker
     $pkgArg = if ($Pkg) { $Pkg } else { "" }
     docker compose exec -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $Service bash -lc "pkg test $pkgArg"
 }
 
 function Run-RunNode {
+    Check-Docker
     if (-not $Pkg -or -not $Node) {
         Write-Host "usage: .\ros2.bat run -Pkg name -Node executable" -ForegroundColor Red
         exit 1
