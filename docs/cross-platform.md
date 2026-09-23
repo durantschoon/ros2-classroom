@@ -64,23 +64,21 @@ installed but WSL integration switched off for the distro you are in.
 
 ## Windows notes
 
-Run the commands from PowerShell or from a WSL 2 shell — both work, because
-nothing depends on the host filesystem layout. Make is often absent on Windows,
-so every target has a plain equivalent:
+Run the repository natively from Windows using the provided scripts. You do not need WSL or Make to use this workstation.
 
-| Make target | Plain command |
+**The One-Click Desktop:** Double-click `ros2.bat` in the repository folder. This will build the container, start the desktop, and automatically open it in your default Windows browser.
+
+**PowerShell CLI:** If you want to use the repository's helper targets (like `build`, `test`, or `turtlesim-teleop`), use the PowerShell script directly:
+
+| Action | PowerShell command |
 |---|---|
-| `make image` | `docker compose build` |
-| `make up` | `docker compose up -d` |
-| `make shell` | `docker compose run --rm shell` |
-| `make turtlesim` | `docker compose exec -d -u ros -e DISPLAY=:1 desktop bash -lc "ros2 run turtlesim turtlesim_node"` |
-| `make down` | `docker compose down` |
-| `make reset` | `docker compose down --volumes` |
-| `make uninstall` | `docker compose down --volumes --rmi all`, then `docker image rm` the `ros` base image |
+| Start desktop | `.\ros2.ps1 up` then `.\ros2.ps1 open` (or just `.\ros2.bat`) |
+| Enter ROS shell | `.\ros2.ps1 shell` |
+| Drive turtlesim | `.\ros2.ps1 turtlesim-teleop` |
+| Build your code | `.\ros2.ps1 build -Pkg my_robot` |
+| Stop containers | `.\ros2.ps1 down` |
 
-If you clone into a Windows path and run from WSL, keep the repository inside
-the WSL filesystem (`~/...`, not `/mnt/c/...`). Build context reads across the
-9p mount are slow enough to be noticeable.
+If you happen to clone into a Windows path and prefer to run from a WSL 2 shell anyway, the `make` targets will still detect your environment and work. However, keeping the repository inside the WSL filesystem (`~/...`, not `/mnt/c/...`) is highly recommended if you choose the WSL route, as build context reads across the 9p mount are noticeably slow.
 
 **Opening the desktop from WSL.** `make open` detects WSL and hands the URL to
 Windows via `wslview`, then `powershell.exe Start-Process`, then
