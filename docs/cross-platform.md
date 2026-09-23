@@ -66,7 +66,9 @@ installed but WSL integration switched off for the distro you are in.
 
 Run the repository natively from Windows using the provided scripts. You do not need WSL or Make to use this workstation.
 
-**The One-Click Desktop:** Double-click `ros2.bat` in the repository folder. This will build the container, start the desktop, and automatically open it in your default Windows browser.
+**Prerequisite:** Download and install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) (accept the default WSL 2 backend). Ensure Docker Desktop is started and running (the Docker engine icon appears in your system tray) before running the repository scripts.
+
+**The One-Click Desktop:** Once Docker Desktop is running, double-click `ros2.bat` in the repository folder. This will build the container, start the desktop, and automatically open it in your default Windows browser.
 
 **PowerShell CLI:** If you want to use the repository's helper targets (like `build`, `test`, or `turtlesim-teleop`), use the PowerShell script directly:
 
