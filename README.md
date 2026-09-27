@@ -162,3 +162,7 @@ a container engine. The other branches are more specialised:
   reproducibility, much narrower audience.
 - `podman` — an earlier Ubuntu/Podman image that forwards the host X11 socket.
   Linux-only, superseded by this branch.
+
+## Acknowledgements
+Built with AI assistance. Agents used in creating this version of the repo:
+Antigravity Agent (Google DeepMind).
