@@ -55,6 +55,7 @@ RUN extra_ros="" \
         ros-${ROS_DISTRO}-rviz2 \
         ros-${ROS_DISTRO}-rqt \
         ros-${ROS_DISTRO}-rqt-common-plugins \
+        ros-${ROS_DISTRO}-rqt-graph \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \

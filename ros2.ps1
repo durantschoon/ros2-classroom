@@ -63,6 +63,8 @@ function Wait-For-Desktop {
 
 function Run-Up {
     Check-Docker
+    Write-Host "Pulling the latest prebuilt workstation image (this only takes a moment)..."
+    docker compose pull --ignore-pull-failures
     Write-Host "Starting the ROS 2 workstation..."
     docker compose up -d
 }
