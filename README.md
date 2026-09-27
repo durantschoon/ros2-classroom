@@ -19,6 +19,18 @@ installed, preferring Docker. Run `make doctor` to check your host, and see
 [docs/host-requirements.md](docs/host-requirements.md) — with older Podman you
 also need `pip install --user -r requirements-host.txt`.
 
+## How this differs (Prior art)
+
+ROS 2 plus noVNC in a container already exists:
+* [Tiryoh/docker-ros2-desktop-vnc](https://github.com/Tiryoh/docker-ros2-desktop-vnc)
+* [husarion/ros2-desktop-vnc](https://github.com/husarion/ros2-desktop-vnc)
+* [rosmed/docker-ubuntu-22.04-ros2-novnc](https://github.com/rosmed/docker-ubuntu-22.04-ros2-novnc)
+
+What sets `ros2-classroom` apart is that it is built specifically for **classrooms and self-learners**, not as a black box:
+* **No hidden magic:** Every `make` target prints the actual `ros2` or `colcon` command before running it, so students learn the native CLI.
+* **Classroom operations:** Built-in `make doctor` for troubleshooting host laptops, `make selftest`, and `make reset` to give students a clean slate without wiping their workspace.
+* **Cross-platform wrappers:** Native scripts for macOS, Linux, and Windows PowerShell/Batch, meaning students don't need to know how to map Docker volumes or ports.
+
 ## Quick start
 
 ```sh
