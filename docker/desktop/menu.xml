@@ -23,6 +23,11 @@
         <command>bash -lc 'rqt'</command>
       </action>
     </item>
+    <item label="rqt_graph">
+      <action name="Execute">
+        <command>bash -lc 'rqt_graph'</command>
+      </action>
+    </item>
     <item label="RViz 2">
       <action name="Execute">
         <command>bash -lc 'rviz2'</command>
