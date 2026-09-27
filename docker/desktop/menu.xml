@@ -23,9 +23,9 @@
         <command>bash -lc 'rqt'</command>
       </action>
     </item>
-    <item label="rqt_graph">
+    <item label="rqt graph">
       <action name="Execute">
-        <command>bash -lc 'rqt_graph'</command>
+        <command>bash -lc 'ros2 run rqt_graph rqt_graph'</command>
       </action>
     </item>
     <item label="RViz 2">
