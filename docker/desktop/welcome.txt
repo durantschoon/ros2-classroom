@@ -4,3 +4,7 @@
   Type make commands in the terminal on your own computer, where you
   ran `make up` -- they do not work in here.
 
+  Tip: After building a ROS 2 package, open a new Terminal to load 
+  it automatically, or run `source install/setup.bash` to load it 
+  into your current session.
+
