@@ -1,0 +1,69 @@
+name: Publish images
+
+# Runs only after the test workflow succeeded on main, so nothing untested is published.
+on:
+  workflow_run:
+    workflows: ["Docker image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:          # manual re-publish
+
+jobs:
+  # One matrix entry per distribution, read from the table rather than hard-coded.
+  distros:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.table.outputs.names }}
+      default: ${{ steps.table.outputs.default }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: table
+        run: |
+          echo "names=$(jq -c '.distros | keys' distros.json)" >> "$GITHUB_OUTPUT"
+          echo "default=$(jq -r '.default' distros.json)" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: distros
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ${{ fromJSON(need
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.wb.sha }}
+
+      # The same resolution make  distribution.
+      - name: Resolve the distribution
+        id: resolve
+        env:
+          ROS_DISTRO: ${{ matrix.
+        run: ./scripts/distros env --make >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3      # arm64 by emulation
+      - uses: docker/setup-buildx
+
+      - uses: docker/login-action
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.G
+
+      - uses: docker/build-push-a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |                                                       ROS_DISTRO=${{ steps.
+            ROS_BASE_DIGEST=${{ steps.resolve.outputs.ROS_BASE_DIG          # :<distro> always; the
+          tags: |                                                             ghcr.io/durantschoon/tro }}
+            ${{ matrix.distro == needs.distros.outputs.default && 'ghcr.io/durantschoon/ros2-classr
+          cache-from: type=gha,scope=${{ matrix.distro }}
+          cache-to: type=gha,mode}}
