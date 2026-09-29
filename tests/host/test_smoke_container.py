@@ -840,6 +840,34 @@ class EngineDetection(SmokeTest):
         )
 
 
+class DistributionImage(SmokeTest):
+    """`make selftest ROS_DISTRO=kilted` checks kilted's image, and nothing else
+    about the suite follows the distribution: its own project, its own port."""
+
+    def kilted(self) -> Scenario:
+        # What make exports for kilted, the suite's own settings left unset.
+        return scenario(
+            "kilted", compose_rules=HAPPY_COMPOSE_RULES, curl_exit=0,
+            ROS_DISTRO="kilted", IMAGE_TAG="kilted", NOVNC_PORT="6084",
+            COMPOSE_PROJECT_NAME="ros2-tutorials-kilted",
+        )
+
+    def test_the_image_user_check_inspects_the_distributions_image(self) -> None:
+        case = self.kilted()
+        inspected = [argv[-1] for argv in case.sandbox.argv("podman")
+                     if argv[:2] == ["image", "inspect"]]
+        name = COMPOSE_IMAGE.rsplit(":", 1)[0]
+        self.assertEqual([name + ":kilted"], inspected, case.report())
+        self.assertIn("the image defaults to the non-root ros user", case.marked("PASS"))
+
+    def test_the_suite_keeps_its_own_project_and_port(self) -> None:
+        case = self.kilted()
+        self.assertProjectOnEveryCall(case)
+        self.assertTornDown(case)
+        for env in case.envs():
+            self.assertEqual(HOST_PORT, env.get("NOVNC_PORT"), env)
+
+
 class Housekeeping(SmokeTest):
     """Behaviours found by running the suite that the stage 05 prompt did not list."""
 

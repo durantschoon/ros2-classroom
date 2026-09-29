@@ -69,10 +69,13 @@ if ($BareWords.Count -gt 0) {
 # The same resolution as the Makefile's scripts/distros, written out here
 # because Windows may have no Python.  ROS_DISTRO comes from the environment
 # (a ROS_DISTRO=name argument has just been put there), else .env, else the
-# default in distros.json.  It resolves to the base digest, the image tag and
-# a compose project of its own, hence its own /workspace.  The default's tag
-# and project are `latest` and `ros2-tutorials`, what students already have.
-# Explicit ROS_BASE_DIGEST, IMAGE_TAG and COMPOSE_PROJECT_NAME are kept.
+# default in distros.json.  It resolves to the base digest, the image tag, a
+# compose project of its own, hence its own /workspace, and a noVNC host port
+# of its own, so several desktops can run at once.  The default's tag, project
+# and port are `latest`, `ros2-tutorials` and 6080, what students already have.
+# Explicit ROS_BASE_DIGEST, IMAGE_TAG, COMPOSE_PROJECT_NAME and NOVNC_PORT are
+# kept.  The table is checked exactly as scripts/distros checks it, with the
+# same messages, so a hand-edited table is accepted by both or by neither.
 
 $DistrosPath = Join-Path $scriptDir "distros.json"
 $DotEnvPath = Join-Path $scriptDir ".env"
@@ -97,21 +100,72 @@ function Read-DotEnv([string]$Path) {
     return $values
 }
 
+function Test-DistroPort($Value) {
+    <# An integer (not a bool, not a fraction) from 1024 to 65535. #>
+    if ($Value -isnot [int] -and $Value -isnot [long]) { return $false }
+    return ($Value -ge 1024 -and $Value -le 65535)
+}
+
+function Get-TableProblem($Table) {
+    <# What is wrong with the parsed distros.json, in scripts/distros' words, or "". #>
+    if ($Table -isnot [System.Management.Automation.PSCustomObject]) { return "expected a JSON object at the top level" }
+    if (@($Table.PSObject.Properties | ForEach-Object { $_.Name }) -ccontains "_comment") {
+        $comment = $Table._comment
+        if ($null -eq $comment -or $comment -isnot [array] -or @($comment | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+            return '"_comment" must be a list of strings'
+        }
+    }
+    $entries = $Table.distros
+    if ($entries -isnot [System.Management.Automation.PSCustomObject] -or @($entries.PSObject.Properties).Count -eq 0) {
+        return 'missing "distros", an object of distribution names'
+    }
+    # Ordinal, as Python sorts: Sort-Object would follow the culture.
+    $sorted = [string[]]@($entries.PSObject.Properties | ForEach-Object { $_.Name })
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $ports = @()
+    foreach ($name in $sorted) {
+        $entry = $entries.$name
+        if ($name -cnotmatch '^[a-z][a-z0-9_-]*$') { return "'$name' is not a distribution name" }
+        if ($entry -isnot [System.Management.Automation.PSCustomObject]) { return """$name"" must be an object with ""ubuntu"", ""port"" and ""digest""" }
+        if ($entry.ubuntu -isnot [string] -or -not $entry.ubuntu) { return """$name"" has no ""ubuntu"" version" }
+        if (-not (Test-DistroPort $entry.port)) { return """$name"" has no ""port"", an integer from 1024 to 65535" }
+        if ($entry.port -eq 6081) { return """$name"" has port 6081, which make selftest keeps for itself" }
+        if ($entry.digest -isnot [string] -or $entry.digest -cnotmatch '^sha256:[0-9a-f]{64}$') { return """$name"" has no ""digest"" of the form sha256:<64 hex digits>" }
+        $ports += ,@($name, [long]$entry.port)
+    }
+    for ($i = 0; $i -lt $ports.Count; $i++) {
+        for ($j = $i + 1; $j -lt $ports.Count; $j++) {
+            if ($ports[$i][1] -eq $ports[$j][1]) { return """$($ports[$i][0])"" and ""$($ports[$j][0])"" share port $($ports[$i][1])" }
+        }
+    }
+    $default = $Table.default
+    if ($default -isnot [string] -or -not $default) { return 'missing "default", the name of the default distribution' }
+    if ($sorted -cnotcontains $default) { return "the default, ""$default"", is not in ""distros""" }
+    return ""
+}
+
 try {
-    $DistroTable = Get-Content -Raw -LiteralPath $DistrosPath | ConvertFrom-Json
+    $DistroText = Get-Content -Raw -LiteralPath $DistrosPath
 } catch {
     Write-Host "${DistrosPath}: cannot read it ($($_.Exception.Message))" -ForegroundColor Red
     exit 1
 }
-$DistroNames = @()
-if ($DistroTable -and $DistroTable.distros) {
-    $DistroNames = @($DistroTable.distros.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
-}
-$DefaultDistro = if ($DistroTable) { "$($DistroTable.default)" } else { "" }
-if ($DistroNames.Count -eq 0 -or $DistroNames -cnotcontains $DefaultDistro) {
-    Write-Host "${DistrosPath}: no ""distros"", or the default is not among them" -ForegroundColor Red
+try {
+    $DistroTable = $DistroText | ConvertFrom-Json
+} catch {
+    Write-Host "${DistrosPath}: not valid JSON ($($_.Exception.Message))" -ForegroundColor Red
     exit 1
 }
+$TableProblem = Get-TableProblem $DistroTable
+if ($TableProblem) {
+    Write-Host "${DistrosPath}: $TableProblem" -ForegroundColor Red
+    exit 1
+}
+$DistroNames = [string[]]@($DistroTable.distros.PSObject.Properties | ForEach-Object { $_.Name })
+[Array]::Sort($DistroNames, [StringComparer]::Ordinal)
+$DefaultDistro = "$($DistroTable.default)"
+# The default first: the order uninstall looks for each distribution's objects in.
+$DistroOrder = @($DefaultDistro) + @($DistroNames | Where-Object { $_ -cne $DefaultDistro })
 
 $DotEnv = Read-DotEnv $DotEnvPath
 $RosDistro = if ($env:ROS_DISTRO) { $env:ROS_DISTRO } elseif ($DotEnv["ROS_DISTRO"]) { $DotEnv["ROS_DISTRO"] } else { $DefaultDistro }
@@ -128,21 +182,29 @@ function Get-DistroProject([string]$Name) {
     if ($Name -ceq $DefaultDistro) { return "ros2-tutorials" } else { return "ros2-tutorials-$Name" }
 }
 
+function Get-DistroPort([string]$Name) {
+    return "$($DistroTable.distros.$Name.port)"
+}
+
 $env:ROS_DISTRO = $RosDistro
 if (-not $env:ROS_BASE_DIGEST) { $env:ROS_BASE_DIGEST = $DistroTable.distros.$RosDistro.digest }
 if (-not $env:IMAGE_TAG) { $env:IMAGE_TAG = Get-DistroTag $RosDistro }
 if (-not $env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME = Get-DistroProject $RosDistro }
+if (-not $env:NOVNC_PORT) { $env:NOVNC_PORT = Get-DistroPort $RosDistro }
 
-$NovncPort = if ($env:NOVNC_PORT) { $env:NOVNC_PORT } else { 6080 }
+# After the resolution, so the URL is the chosen distribution's port.
+$NovncPort = $env:NOVNC_PORT
 $Url = "http://127.0.0.1:$NovncPort"
 $DesktopUrl = "$Url/vnc.html?autoconnect=1&resize=remote&reconnect=true"
 $Service = "desktop"
 
-# The student's compose project (the `name:` in compose.yaml) and the self-test's.
-$Projects = @(
-    $(if ($env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME } else { "ros2-tutorials" }),
-    $(if ($env:SELFTEST_PROJECT) { $env:SELFTEST_PROJECT } else { "ros2-tutorials-selftest" })
-)
+# Every distribution's compose project, the default's first, then any other
+# project named in the environment, then the self-test's.
+$Projects = @()
+foreach ($name in $DistroOrder) { $Projects += Get-DistroProject $name }
+$Projects += $env:COMPOSE_PROJECT_NAME
+$Projects += $(if ($env:SELFTEST_PROJECT) { $env:SELFTEST_PROJECT } else { "ros2-tutorials-selftest" })
+$Projects = @($Projects | Where-Object { $_ } | Select-Object -Unique)
 $ProjectLabel = "com.docker.compose.project"
 
 # --- helpers -------------------------------------------------------------------
@@ -391,11 +453,12 @@ function Run-Engine {
     Write-Host "docker compose $($version[0])  (Docker Desktop)"
 }
 
-# Everything reset removes, plus the images, for both the student's project and
-# the self-test's.  Talks to docker directly rather than through compose, so it
-# works whatever state compose left behind, and never touches anything outside
-# those projects' labels and this repo's image names.  The build cache is
-# shared with every other project on the machine, so it is reported, not removed.
+# Everything reset removes, plus the images, for every distribution in
+# distros.json -- not only the one ROS_DISTRO chooses now -- and the self-test.
+# Talks to docker directly rather than through compose, so it works whatever
+# state compose left behind, and never touches anything outside those
+# projects' labels and this repo's image names.  The build cache is shared
+# with every other project on the machine, so it is reported, not removed.
 function Run-Uninstall {
     Check-Docker
 
@@ -415,20 +478,19 @@ function Run-Uninstall {
         }
     }
 
-    # The image compose.yaml names (pulled or built), the name the self-test
-    # builds under, and the digest-pinned ROS base, present after a local build.
+    # The image compose.yaml names now (pulled or built); then, for every
+    # distribution, its own image tag, the tag builds had before the image was
+    # renamed (ros2-tutorials:<name>), and its digest-pinned ROS base, present
+    # after a local build.
     $images = @()
     $composeImages = Get-NativeOutput @("docker", "compose", "config", "--images")
     if ($composeImages) { $images += $composeImages }
-    $imageName = if ($env:IMAGE_NAME) { $env:IMAGE_NAME } else { "ros2-tutorials" }
-    $rosDistro = if ($env:ROS_DISTRO) { $env:ROS_DISTRO } else { "lyrical" }
-    $images += "${imageName}:$rosDistro"
-    $digestLine = Select-String -Path (Join-Path $scriptDir "Dockerfile") -Pattern '^ARG ROS_BASE_DIGEST=(\S+)' | Select-Object -First 1
-    $digest = if ($env:ROS_BASE_DIGEST) { $env:ROS_BASE_DIGEST } elseif ($digestLine) { $digestLine.Matches[0].Groups[1].Value } else { "" }
-    if ($digest) {
-        $registry = if ($env:ROS_REGISTRY) { $env:ROS_REGISTRY.TrimEnd("/") } else { "docker.io/library" }
-        $images += "$registry/ros@$digest"
-    }
+    $imageName = if ($env:IMAGE_NAME) { $env:IMAGE_NAME } else { "ghcr.io/durantschoon/ros2-classroom" }
+    foreach ($name in $DistroOrder) { $images += "${imageName}:$(Get-DistroTag $name)" }
+    foreach ($name in $DistroOrder) { $images += "ros2-tutorials:$name" }
+    $registry = if ($env:ROS_REGISTRY) { $env:ROS_REGISTRY.TrimEnd("/") } else { "docker.io/library" }
+    foreach ($name in $DistroOrder) { $images += "$registry/ros@$($DistroTable.distros.$name.digest)" }
+    if ($env:ROS_BASE_DIGEST) { $images += "$registry/ros@$($env:ROS_BASE_DIGEST)" }
     foreach ($image in ($images | Where-Object { $_ } | Select-Object -Unique)) {
         $size = Get-NativeOutput @("docker", "image", "inspect", "--format", "{{.Size}}", $image)
         if ($null -ne $size) { $items += [pscustomobject]@{ Kind = "image"; Ref = $image; Size = [long]$size[0] } }
@@ -532,16 +594,16 @@ function Run-Doctor {
 function Show-Distros {
     # An ArrayList, so each row stays one array; PowerShell would flatten them.
     $rows = New-Object System.Collections.ArrayList
-    [void]$rows.Add([string[]]@("DISTRO", "UBUNTU", "IMAGE TAG", "COMPOSE PROJECT"))
+    [void]$rows.Add([string[]]@("DISTRO", "UBUNTU", "PORT", "IMAGE TAG", "COMPOSE PROJECT"))
     foreach ($name in $DistroNames) {
-        [void]$rows.Add([string[]]@($name, "$($DistroTable.distros.$name.ubuntu)", (Get-DistroTag $name), (Get-DistroProject $name)))
+        [void]$rows.Add([string[]]@($name, "$($DistroTable.distros.$name.ubuntu)", (Get-DistroPort $name), (Get-DistroTag $name), (Get-DistroProject $name)))
     }
-    $widths = @(0, 0, 0, 0)
+    $widths = @(0, 0, 0, 0, 0)
     foreach ($row in $rows) {
-        foreach ($i in 0..3) { if ($row[$i].Length -gt $widths[$i]) { $widths[$i] = $row[$i].Length } }
+        foreach ($i in 0..4) { if ($row[$i].Length -gt $widths[$i]) { $widths[$i] = $row[$i].Length } }
     }
     foreach ($row in $rows) {
-        $cells = (@(foreach ($i in 0..3) { $row[$i].PadRight($widths[$i]) })) -join "  "
+        $cells = (@(foreach ($i in 0..4) { $row[$i].PadRight($widths[$i]) })) -join "  "
         if ($row[0] -ceq $DefaultDistro) { Write-Host "$cells  (default)" } else { Write-Host $cells.TrimEnd() }
     }
     Write-Host ""

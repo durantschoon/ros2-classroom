@@ -6,13 +6,15 @@
     "chooses one; make and ros2.ps1 pass the matching digest to the build.",
     "`make digest` fetches every current digest and rewrites this file;",
     "`make distros` lists them. The default's ARG and compose defaults in",
-    "Dockerfile and compose.yaml must match its entry here."
+    "Dockerfile and compose.yaml must match its entry here. Each has its own",
+    "noVNC host port, so several desktops can run at once; 6081 is left to",
+    "`make selftest`."
   ],
   "default": "lyrical",
   "distros": {
-    "humble": {"ubuntu": "22.04", "digest": "sha256:1813d3c85d7f96ff7d3012d865204583255740182db5d0065f8f8cd029a83138"},
-    "jazzy": {"ubuntu": "24.04", "digest": "sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8"},
-    "kilted": {"ubuntu": "24.04", "digest": "sha256:8e7b828a8f24416dd29fde258d81ad49c87fb9becc1289cf69c9d28d36fa78f9"},
-    "lyrical": {"ubuntu": "26.04", "digest": "sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806"}
+    "humble": {"ubuntu": "22.04", "port": 6082, "digest": "sha256:1813d3c85d7f96ff7d3012d865204583255740182db5d0065f8f8cd029a83138"},
+    "jazzy": {"ubuntu": "24.04", "port": 6083, "digest": "sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8"},
+    "kilted": {"ubuntu": "24.04", "port": 6084, "digest": "sha256:8e7b828a8f24416dd29fde258d81ad49c87fb9becc1289cf69c9d28d36fa78f9"},
+    "lyrical": {"ubuntu": "26.04", "port": 6080, "digest": "sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806"}
   }
 }

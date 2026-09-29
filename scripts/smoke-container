@@ -136,9 +136,11 @@ def squeezed_first_line(text: str) -> str:
     return substitution(text.replace(" ", "").replace("\r", "")).split("\n")[0]
 
 
-def image_reference(name: str) -> str:
-    """The `name:tag` compose.yaml builds under: ${IMAGE_NAME:-<default>}:latest."""
-    return "{}:latest".format(name or "ghcr.io/durantschoon/ros2-classroom")
+def image_reference(name: str, tag: str) -> str:
+    """The `name:tag` compose.yaml builds under:
+    ${IMAGE_NAME:-<default>}:${IMAGE_TAG:-latest}, the tag being the ROS
+    distribution's own (make sets it from distros.json)."""
+    return "{}:{}".format(name or "ghcr.io/durantschoon/ros2-classroom", tag or "latest")
 
 
 # --- imperative shell: processes, output, and the run's accounting ----------
@@ -399,7 +401,7 @@ def step_image_and_environment(suite: Suite, domain: str) -> None:
     # Read the image's configured user directly: podman-compose's `run` prints
     # a container id rather than the command's output, so a runtime probe is
     # not portable here.
-    image = image_reference(os.environ.get("IMAGE_NAME", ""))
+    image = image_reference(os.environ.get("IMAGE_NAME", ""), os.environ.get("IMAGE_TAG", ""))
     engine = suite.run([str(REPO / "scripts" / "compose-command"), "--engine"], out="capture")
     if engine.status != 0:
         # Without an engine the image cannot be inspected.  That is one failed

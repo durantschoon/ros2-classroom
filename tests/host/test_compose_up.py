@@ -8,6 +8,8 @@ are the behaviour to preserve.
 import unittest
 
 from fakes import COMPOSE_IMAGE, COMPOSE_IMAGE_TAG, ScriptTestCase, rule
+import shutil
+from fakes import COMPOSE_IMAGE_NAME, SCRIPTS
 
 IMAGE = COMPOSE_IMAGE
 LOCAL_IMAGE = "localhost/" + IMAGE
@@ -247,8 +249,9 @@ class ComposeUpTests(ScriptTestCase):
         run = self.run_script(COMPOSE="compose-stub", ENGINE="podman")
         self.assertStatus(run, 1)
         self.assertHas(run, "something else is using host port 6080.", where="stderr")
-        # Not 6081: that is `make selftest`'s own port.
-        self.assertHas(run, "  make up NOVNC_PORT=6082 && make open NOVNC_PORT=6082",
+        # Not 6081: that is `make selftest`'s own port.  Nor 6082-6084: those
+        # are the other distributions' own.
+        self.assertHas(run, "  make up NOVNC_PORT=6085 && make open NOVNC_PORT=6085",
                        where="stderr")
 
     def test_the_hint_follows_an_overridden_port(self):
@@ -280,6 +283,83 @@ class ComposeUpTests(ScriptTestCase):
         self.assertNotEqual(0, run.status, run.report())
         self.assertHas(run, "ENGINE is not set", where="stderr")
         self.assertEqual([], self.sandbox.argv("compose-stub"))
+
+
+class DistributionTests(ScriptTestCase):
+    """compose-up and the ROS distribution: the image it compares is the
+    distribution's own, and a busy port is never answered with another
+    distribution's."""
+
+    script = "compose-up"
+
+    def setUp(self):
+        super().setUp()
+        self.sandbox.link("dirname", "sed", "head")
+
+    def inspected_images(self):
+        return [c[-1] for c in self.sandbox.argv("podman") if c[:2] == ["image", "inspect"]]
+
+    def test_the_distributions_own_image_is_inspected(self):
+        self.sandbox.fake("podman", rules=engine_rules(image_id="id"))
+        self.sandbox.fake("compose-stub", stdout="compose ran\n")
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman", IMAGE_TAG="jazzy")
+        self.assertStatus(run, 0)
+        self.assertEqual([COMPOSE_IMAGE_NAME + ":jazzy", "localhost/" + COMPOSE_IMAGE_NAME + ":jazzy"],
+                         self.inspected_images())
+
+    def test_without_a_tag_latest_is_inspected(self):
+        self.sandbox.fake("podman", rules=engine_rules(image_id="id"))
+        self.sandbox.fake("compose-stub", stdout="compose ran\n")
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman")
+        self.assertStatus(run, 0)
+        self.assertEqual([COMPOSE_IMAGE_NAME + ":latest"], self.inspected_images())
+
+    def test_a_stale_distribution_image_is_recreated(self):
+        self.sandbox.fake("podman", rules=[
+            rule(["image", "inspect", "--format", "{{.Id}}", COMPOSE_IMAGE_NAME + ":kilted"],
+                 stdout="newid\n"),
+            rule(["image"], exit_code=1),
+            rule(["ps"], stdout=CONTAINER + "\n"),
+            rule(["inspect"], stdout="oldid\n"),
+        ])
+        self.sandbox.fake("compose-stub", stdout="compose ran\n")
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman", IMAGE_TAG="kilted",
+                              COMPOSE_PROJECT_NAME="ros2-tutorials-kilted")
+        self.assertStatus(run, 0)
+        self.assertHas(run, REBUILT)
+        self.assertEqual([["up", "-d", "--force-recreate"]], self.sandbox.argv("compose-stub"))
+
+    def busy_hint(self, port, script=None):
+        self.sandbox.fake("podman", rules=engine_rules(image_id="sameid"))
+        self.sandbox.fake("compose-stub", exit_code=1)
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman", NOVNC_PORT=port,
+                              script=script)
+        self.assertStatus(run, 1)
+        return run
+
+    def test_a_busy_distribution_port_skips_the_others_and_the_selftests(self):
+        for port in ("6082", "6080"):
+            with self.subTest(port=port):
+                run = self.busy_hint(port)
+                self.assertHas(run, "something else is using host port {}.".format(port),
+                               where="stderr")
+                self.assertHas(run, "  make up NOVNC_PORT=6085 && make open NOVNC_PORT=6085",
+                               where="stderr")
+                for taken in ("6081", "6083", "6084"):
+                    self.assertLacks(run, "NOVNC_PORT=" + taken, where="stderr")
+
+    def test_an_unreadable_table_skips_only_the_selftests_port(self):
+        # A copy of compose-up with no distros.json beside it.
+        tree = self.sandbox.root / "tree"
+        (tree / "scripts").mkdir(parents=True)
+        shutil.copy2(str(SCRIPTS / "compose-up"), str(tree / "scripts" / "compose-up"))
+        run = self.busy_hint("6080", script=str(tree / "scripts" / "compose-up"))
+        self.assertHas(run, "  make up NOVNC_PORT=6082 && make open NOVNC_PORT=6082",
+                       where="stderr")
+        (tree / "distros.json").write_text("{ not json")
+        run = self.busy_hint("6080", script=str(tree / "scripts" / "compose-up"))
+        self.assertHas(run, "  make up NOVNC_PORT=6082 && make open NOVNC_PORT=6082",
+                       where="stderr")
 
 
 if __name__ == "__main__":

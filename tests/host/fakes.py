@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence
+from typing import Any, Callable
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -372,3 +373,69 @@ class ScriptTestCase(unittest.TestCase):
 
     def assertStatus(self, run: Run, expected: int) -> None:
         self.assertEqual(expected, run.status, run.report())
+
+
+# --- distros.json with one thing wrong ---------------------------------------
+#
+# scripts/distros and ros2.ps1 each check the table, and a hand-edited one must
+# be refused by both or by neither.  Each case is the repository's own table
+# with exactly one fault, keyed by what is wrong, so that both can be run on
+# the same text.
+
+
+def _table_with(change: Callable[[Dict[str, Any]], None]) -> str:
+    table = json.loads((REPO / "distros.json").read_text())
+    change(table)
+    return json.dumps(table, indent=2) + "\n"
+
+
+def _set_entry(distro: str, key: str, value: object) -> Callable[[Dict[str, Any]], None]:
+    def change(table: Dict[str, Any]) -> None:
+        table["distros"][distro][key] = value
+
+    return change
+
+
+def _drop_entry(distro: str, key: str) -> Callable[[Dict[str, Any]], None]:
+    def change(table: Dict[str, Any]) -> None:
+        del table["distros"][distro][key]
+
+    return change
+
+
+def _rename(old: str, new: str) -> Callable[[Dict[str, Any]], None]:
+    def change(table: Dict[str, Any]) -> None:
+        table["distros"][new] = table["distros"].pop(old)
+
+    return change
+
+
+def _set_top(key: str, value: object) -> Callable[[Dict[str, Any]], None]:
+    """Set a top-level key, or remove it when value is None."""
+
+    def change(table: Dict[str, Any]) -> None:
+        if value is None:
+            del table[key]
+        else:
+            table[key] = value
+
+    return change
+
+
+def malformed_tables() -> Dict[str, str]:
+    """Each malformed distros.json, as text, keyed by what is wrong with it."""
+    return {
+        "a port that is a string": _table_with(_set_entry("jazzy", "port", "6083")),
+        "a port with a fraction": _table_with(_set_entry("jazzy", "port", 6083.5)),
+        "a port written as a float": _table_with(_set_entry("jazzy", "port", 6083.0)),
+        "a port that is true": _table_with(_set_entry("jazzy", "port", True)),
+        "no port": _table_with(_drop_entry("jazzy", "port")),
+        "a port below 1024": _table_with(_set_entry("humble", "port", 80)),
+        "a port above 65535": _table_with(_set_entry("kilted", "port", 70000)),
+        "two distributions sharing a port": _table_with(_set_entry("jazzy", "port", 6082)),
+        "the self-test's port": _table_with(_set_entry("kilted", "port", 6081)),
+        "a digest of the wrong shape": _table_with(_set_entry("humble", "digest", "sha256:nope")),
+        "a name of the wrong shape": _table_with(_rename("jazzy", "Jazzy 2")),
+        "no default": _table_with(_set_top("default", None)),
+        "a default not in the table": _table_with(_set_top("default", "rolling")),
+    }

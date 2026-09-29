@@ -7,20 +7,26 @@
 
 ROS_DISTRO is the one knob.  It comes from the environment (make hands its
 command-line value over that way), else from .env, else from the table's
-default, and resolves to four settings:
+default, and resolves to five settings:
 
     ROS_DISTRO             the name, checked against the table
     ROS_BASE_DIGEST        the digest of ros:<distro>-ros-base it builds FROM
     IMAGE_TAG              <distro>, or `latest` for the default distribution
     COMPOSE_PROJECT_NAME   ros2-tutorials-<distro>, or plain ros2-tutorials for
                            the default
+    NOVNC_PORT             the host port its desktop is published on
 
 Each distribution therefore gets its own image tag and its own compose
-project, hence its own /workspace volume.  The default's names are aliases
-that carry no distribution: they are what the workstation used before it had
-more than one, so a student's existing volumes stay theirs.  A non-empty
-ROS_BASE_DIGEST, IMAGE_TAG or COMPOSE_PROJECT_NAME already in the environment
-is passed through unchanged (the self-test sets its own project, for one).
+project, hence its own /workspace volume, and its own port, so several
+desktops can run at once.  The default's names are aliases that carry no
+distribution: they are what the workstation used before it had more than one,
+so a student's existing volumes stay theirs, and its port is the old 6080.  A
+non-empty ROS_BASE_DIGEST, IMAGE_TAG, COMPOSE_PROJECT_NAME or NOVNC_PORT
+already in the environment is passed through unchanged (the self-test sets its
+own project, for one).
+
+The table refuses a port outside 1024-65535, a port two distributions share,
+and 6081, which `make selftest` keeps for itself.
 
 `env` prints `export NAME=value` lines for a shell to eval; `--make` prints
 bare NAME=value lines for the Makefile to export.
@@ -62,6 +68,11 @@ USAGE = "usage: distros env [--make] | distros list | distros refresh"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _NAME = re.compile(r"[a-z][a-z0-9_-]*")
 
+# Host ports a distribution may take: unprivileged, and never the self-test's.
+MIN_PORT = 1024
+MAX_PORT = 65535
+SELFTEST_PORT = 6081
+
 
 class Subcommand(enum.Enum):
     ENV = "env"
@@ -73,6 +84,7 @@ class Subcommand(enum.Enum):
 class Distro(NamedTuple):
     name: str
     ubuntu: str
+    port: int
     digest: str
 
 
@@ -98,6 +110,7 @@ class Settings(NamedTuple):
     ros_base_digest: str
     image_tag: str
     compose_project_name: str
+    novnc_port: str
 
     def pairs(self) -> List[Tuple[str, str]]:
         return [
@@ -105,6 +118,7 @@ class Settings(NamedTuple):
             ("ROS_BASE_DIGEST", self.ros_base_digest),
             ("IMAGE_TAG", self.image_tag),
             ("COMPOSE_PROJECT_NAME", self.compose_project_name),
+            ("NOVNC_PORT", self.novnc_port),
         ]
 
 
@@ -131,6 +145,15 @@ def parse_args(argv: Sequence[str]) -> Union[Subcommand, Problem]:
     return Problem(USAGE, EXIT_USAGE)
 
 
+def is_port(value: object) -> bool:
+    """An integer (not a bool, not a float) in the unprivileged range."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and MIN_PORT <= value <= MAX_PORT
+    )
+
+
 def parse_table(text: str) -> Union[Table, str]:
     """The table in distros.json, or a one-line description of what is wrong."""
     try:
@@ -153,14 +176,28 @@ def parse_table(text: str) -> Union[Table, str]:
         if not _NAME.fullmatch(name):
             return "{!r} is not a distribution name".format(name)
         if not isinstance(entry, dict):
-            return '"{}" must be an object with "ubuntu" and "digest"'.format(name)
+            return '"{}" must be an object with "ubuntu", "port" and "digest"'.format(name)
         ubuntu = entry.get("ubuntu")
+        port = entry.get("port")
         digest = entry.get("digest")
         if not isinstance(ubuntu, str) or not ubuntu:
             return '"{}" has no "ubuntu" version'.format(name)
+        if not is_port(port):
+            return '"{}" has no "port", an integer from {} to {}'.format(
+                name, MIN_PORT, MAX_PORT
+            )
+        if port == SELFTEST_PORT:
+            return '"{}" has port {}, which make selftest keeps for itself'.format(
+                name, SELFTEST_PORT
+            )
         if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
             return '"{}" has no "digest" of the form sha256:<64 hex digits>'.format(name)
-        distros.append(Distro(name, ubuntu, digest))
+        distros.append(Distro(name, ubuntu, port, digest))
+
+    for index, distro in enumerate(distros):
+        for other in distros[index + 1:]:
+            if other.port == distro.port:
+                return '"{}" and "{}" share port {}'.format(distro.name, other.name, distro.port)
 
     default = data.get("default")
     if not isinstance(default, str) or not default:
@@ -184,9 +221,10 @@ def render_table(table: Table) -> str:
     lines.append('  "default": {},'.format(json.dumps(table.default)))
     lines.append('  "distros": {')
     lines.extend(
-        '    {}: {{"ubuntu": {}, "digest": {}}}{}'.format(
+        '    {}: {{"ubuntu": {}, "port": {}, "digest": {}}}{}'.format(
             json.dumps(distro.name),
             json.dumps(distro.ubuntu),
+            distro.port,
             json.dumps(distro.digest),
             "," if index < len(table.distros) - 1 else "",
         )
@@ -239,7 +277,7 @@ def own_project(distro: Distro, table: Table) -> str:
 
 
 def resolve(name: str, table: Table, environ: Dict[str, str]) -> Union[Settings, Problem]:
-    """The four settings for `name`, keeping any explicit ones in `environ`."""
+    """The five settings for `name`, keeping any explicit ones in `environ`."""
     distro = table.get(name)
     if distro is None:
         return unsupported(name, table)
@@ -248,6 +286,7 @@ def resolve(name: str, table: Table, environ: Dict[str, str]) -> Union[Settings,
         ros_base_digest=environ.get("ROS_BASE_DIGEST") or distro.digest,
         image_tag=environ.get("IMAGE_TAG") or own_tag(distro, table),
         compose_project_name=environ.get("COMPOSE_PROJECT_NAME") or own_project(distro, table),
+        novnc_port=environ.get("NOVNC_PORT") or str(distro.port),
     )
 
 
@@ -260,9 +299,10 @@ def render_env(settings: Settings, for_make: bool) -> str:
 
 
 def render_list(table: Table) -> str:
-    header = ("DISTRO", "UBUNTU", "IMAGE TAG", "COMPOSE PROJECT")
+    header = ("DISTRO", "UBUNTU", "PORT", "IMAGE TAG", "COMPOSE PROJECT")
     rows = [
-        (d.name, d.ubuntu, own_tag(d, table), own_project(d, table)) for d in table.distros
+        (d.name, d.ubuntu, str(d.port), own_tag(d, table), own_project(d, table))
+        for d in table.distros
     ]
     widths = [max(len(row[i]) for row in [header] + rows) for i in range(len(header))]
     lines = []

@@ -23,6 +23,8 @@ from typing import List
 from typing import Dict
 
 from fakes import REAL_PATH, REPO, Run, ScriptTestCase, strip_ansi
+from fakes import COMPOSE_IMAGE, malformed_tables, rule
+from typing import Tuple
 
 PWSH = os.environ.get("PWSH") or shutil.which("pwsh", path=REAL_PATH)
 
@@ -265,11 +267,11 @@ class DistroTests(Ros2Ps1TestCase):
         run = self.run_copy("distros")
         self.assertStatus(run, 0)
         self.assertEqual([
-            "DISTRO   UBUNTU  IMAGE TAG  COMPOSE PROJECT",
-            "humble   22.04   humble     ros2-tutorials-humble",
-            "jazzy    24.04   jazzy      ros2-tutorials-jazzy",
-            "kilted   24.04   kilted     ros2-tutorials-kilted",
-            "lyrical  26.04   latest     ros2-tutorials         (default)",
+            "DISTRO   UBUNTU  PORT  IMAGE TAG  COMPOSE PROJECT",
+            "humble   22.04   6082  humble     ros2-tutorials-humble",
+            "jazzy    24.04   6083  jazzy      ros2-tutorials-jazzy",
+            "kilted   24.04   6084  kilted     ros2-tutorials-kilted",
+            "lyrical  26.04   6080  latest     ros2-tutorials         (default)",
             "",
             "Choose one with ROS_DISTRO=<name>, e.g.  .\\ros2.ps1 up ROS_DISTRO=jazzy",
         ], run.out_lines)
@@ -289,6 +291,145 @@ class DistroTests(Ros2Ps1TestCase):
         self.assertHas(run, "ros2-tutorials-jazzy_ros-home")
         for argv in self.sandbox.argv("docker"):
             self.assertNotIn("-v", argv, run.report())
+
+
+# --- a port per distribution, uninstall across all of them, one table check ------
+
+PORTS = {"humble": "6082", "jazzy": "6083", "kilted": "6084", "lyrical": "6080"}
+IMAGE_NAME = COMPOSE_IMAGE.rsplit(":", 1)[0]
+
+
+class DistroTreeTestCase(Ros2Ps1TestCase):
+    """A temporary copy of ros2.ps1, scripts/distros and distros.json."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tree = self.sandbox.root / "tree"
+        (self.tree / "scripts").mkdir(parents=True)
+        shutil.copy2(str(REPO / "ros2.ps1"), str(self.tree / "ros2.ps1"))
+        shutil.copy2(str(REPO / "distros.json"), str(self.tree / "distros.json"))
+        shutil.copy2(str(REPO / "scripts" / "distros"), str(self.tree / "scripts" / "distros"))
+
+    def run_copy(self, *args: str, **overrides: str) -> Run:
+        env = self.sandbox.environ(
+            POWERSHELL_TELEMETRY_OPTOUT="1",
+            POWERSHELL_UPDATECHECK="Off",
+            DOTNET_CLI_TELEMETRY_OPTOUT="1",
+            **overrides
+        )
+        proc = subprocess.run(
+            [str(PWSH), "-NoProfile", "-NonInteractive", "-File", str(self.tree / "ros2.ps1")]
+            + list(args),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+            cwd=str(self.sandbox.root), env=env, check=False, timeout=120,
+        )
+        return Run(proc.returncode,
+                   strip_ansi(proc.stdout.decode("utf-8", errors="replace")),
+                   strip_ansi(proc.stderr.decode("utf-8", errors="replace")))
+
+
+class PortTests(DistroTreeTestCase):
+    def test_each_distribution_hands_docker_its_own_port(self):
+        self.sandbox.fake("docker", record_env=("NOVNC_PORT",))
+        for name, port in PORTS.items():
+            with self.subTest(distro=name):
+                run = self.run_copy("ps", "ROS_DISTRO=" + name)
+                self.assertStatus(run, 0)
+                self.assertEqual({"NOVNC_PORT": port}, self.sandbox.last_recorded_env("docker"))
+
+    def test_an_explicit_port_wins(self):
+        self.sandbox.fake("docker", record_env=("NOVNC_PORT",))
+        run = self.run_copy("ps", "ROS_DISTRO=jazzy", "NOVNC_PORT=7000")
+        self.assertStatus(run, 0)
+        self.assertEqual({"NOVNC_PORT": "7000"}, self.sandbox.last_recorded_env("docker"))
+
+    def test_open_uses_the_distributions_port(self):
+        # `help` shows exactly what `open` starts, without waiting for a desktop.
+        for name, port in PORTS.items():
+            with self.subTest(distro=name):
+                run = self.run_copy("help", "ROS_DISTRO=" + name)
+                self.assertStatus(run, 0)
+                self.assertHas(run, "runs: Start-Process http://127.0.0.1:{}/vnc.html?".format(port))
+                self.assertHas(run, "Desktop: http://127.0.0.1:{}".format(port))
+                self.assertEqual({port}, set(re.findall(r"127\.0\.0\.1:(\d+)", run.out)))
+
+
+def every_distribution_docker() -> Tuple[List[Dict[str, object]], List[str], List[str]]:
+    """A docker holding one container, volume and network per distribution's
+    project and the self-test's, and each distribution's images; with the
+    projects and images in the order uninstall should find them."""
+    default = DISTRO_TABLE["default"]
+    names = [default] + sorted(n for n in DISTRO_TABLE["distros"] if n != default)
+    projects = [("ros2-tutorials" if n == default else "ros2-tutorials-" + n) for n in names]
+    projects.append("ros2-tutorials-selftest")
+    images = ([IMAGE_NAME + ":" + ("latest" if n == default else n) for n in names]
+              + ["ros2-tutorials:" + n for n in names]
+              + ["docker.io/library/ros@" + DISTRO_TABLE["distros"][n]["digest"] for n in names])
+    rules = []
+    for project in projects:
+        label = "label=com.docker.compose.project=" + project
+        rules.append(rule(["ps", "-a", "--filter", label], stdout=project + "-desktop-1\n"))
+        rules.append(rule(["volume", "ls", "--filter", label], stdout=project + "_ros-home\n"))
+        rules.append(rule(["network", "ls", "--filter", label], stdout=project + "_ros\n"))
+    for image in images:
+        rules.append(rule(["image", "inspect", "--format", "{{.Size}}", image],
+                          stdout="2000000\n"))
+    rules.append(rule(["image", "inspect"], exit_code=1))
+    return rules, projects, images
+
+
+class EveryDistributionUninstallTests(DistroTreeTestCase):
+    def test_uninstall_lists_every_distributions_objects(self):
+        rules, projects, images = every_distribution_docker()
+        self.sandbox.fake("docker", rules=rules)
+        run = self.run_copy("uninstall")
+        self.assertStatus(run, 1)
+        for project in projects:
+            for thing in ("container " + project + "-desktop-1",
+                          "volume    " + project + "_ros-home",
+                          "network   " + project + "_ros"):
+                self.assertHas(run, "  " + thing)
+        for image in images:
+            self.assertHas(run, "  image     {}  (2.0 MB)".format(image))
+        self.assertEqual([], [argv for argv in self.sandbox.argv("docker") if "rm" in argv])
+
+    def test_uninstall_removes_them_in_order_one_call_per_kind(self):
+        rules, projects, images = every_distribution_docker()
+        self.sandbox.fake("docker", rules=rules)
+        run = self.run_copy("uninstall", "YES=1", "ROS_DISTRO=kilted")
+        self.assertStatus(run, 0)
+        removals = [argv for argv in self.sandbox.argv("docker")
+                    if argv[:1] == ["rm"] or argv[1:2] == ["rm"]]
+        self.assertEqual([
+            ["rm", "-f"] + [p + "-desktop-1" for p in projects],
+            ["volume", "rm"] + [p + "_ros-home" for p in projects],
+            ["network", "rm"] + [p + "_ros" for p in projects],
+            ["image", "rm"] + images,
+        ], removals)
+
+
+class SharedTableTests(DistroTreeTestCase):
+    """The same malformed tables through scripts/distros and ros2.ps1: both
+    refuse each one, in the same words."""
+
+    def test_both_refuse_every_malformed_table_alike(self):
+        table_path = self.tree / "distros.json"
+        prefix = "{}: ".format(table_path)
+        for case, text in malformed_tables().items():
+            with self.subTest(case=case):
+                table_path.write_text(text)
+                proc = subprocess.run(
+                    [str(self.tree / "scripts" / "distros"), "env"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                    env=self.sandbox.environ(), check=False, timeout=60)
+                script_err = proc.stderr.decode("utf-8", errors="replace").strip()
+                self.assertEqual(1, proc.returncode, script_err)
+                self.assertTrue(script_err.startswith(prefix), script_err)
+                run = self.run_copy("distros")
+                self.assertStatus(run, 1)
+                self.assertEqual([script_err], run.out_lines, run.report())
+                self.assertFalse(self.sandbox.called("docker"), run.report())
+
 
 if __name__ == "__main__":
     unittest.main()

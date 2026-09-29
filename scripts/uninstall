@@ -5,13 +5,21 @@
     make uninstall YES=1    remove it without asking
 
 `make reset` removes containers and volumes but keeps the images, which are
-most of the disk space.  This removes, for both the student's project and the
-self-test's:
+most of the disk space.  This removes, for every ROS distribution in
+distros.json -- not only the one ROS_DISTRO chooses now -- and for the
+self-test:
 
 - the containers, running or stopped
 - the named volumes (the student's code, builds, and settings)
 - the compose networks
 - the built image, and the digest-pinned ROS base image it was built from
+
+A student who tried jazzy and went back to the default still has jazzy's
+volumes and image; they are found here too.  Each distribution's names come
+from the table as scripts/distros gives them: project ros2-tutorials and tag
+`latest` for the default, ros2-tutorials-<name> and <name> otherwise.  When
+the table cannot be read, only the environment's project and image and the
+Dockerfile's base are looked for, as before there was a table.
 
 It talks to the engine directly rather than through compose, so it works
 whatever state compose left behind, and it never touches anything outside
@@ -23,6 +31,7 @@ Expects ENGINE from the Makefile.
 Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
 """
 
+import json
 import os
 import re
 import signal
@@ -30,14 +39,18 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The image compose.yaml names: ${IMAGE_NAME:-<default>}:latest.  The tag is
-# fixed, not the ROS distribution; keep both in step with compose.yaml.
+# The image compose.yaml names: ${IMAGE_NAME:-<default>}:${IMAGE_TAG:-latest}.
+# Keep both in step with compose.yaml.
 DEFAULT_IMAGE_NAME = "ghcr.io/durantschoon/ros2-classroom"
-IMAGE_TAG = "latest"
+DEFAULT_IMAGE_TAG = "latest"
+
+# The ROS distributions, found next to this script's directory, never through
+# the working directory.
+TABLE_PATH = REPO / "distros.json"
 
 # How images were tagged before compose.yaml named the published image:
 # <legacy name>:<ROS distribution>.  Builds from then may still be on disk.
@@ -59,6 +72,9 @@ VOLUMES = (
 PROJECT_LABEL = "com.docker.compose.project"
 
 CONFIRM_WORD = "uninstall"
+
+_NAME = re.compile(r"[a-z][a-z0-9_-]*")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -97,7 +113,124 @@ class Item(NamedTuple):
     size: int  # bytes, or 0 when unknown
 
 
+class Distribution(NamedTuple):
+    """One entry of distros.json, as far as finding its objects needs."""
+
+    name: str
+    digest: str  # "" when the entry has none to look for
+
+
 # --- pure core --------------------------------------------------------------
+
+
+def parse_distributions(text: str) -> Optional[List[Distribution]]:
+    """The table's distributions, the default first, or None when it is unusable.
+
+    Only what finding the workstation's objects needs is read: the names, the
+    default, and each digest.  scripts/distros is the table's judge; this
+    refuses only what it cannot use at all.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    entries = data.get("distros")
+    default = data.get("default")
+    if not isinstance(entries, dict) or not isinstance(default, str) or default not in entries:
+        return None
+    found = []  # type: List[Distribution]
+    for name in sorted(entries, key=lambda each: (each != default, each)):
+        entry = entries[name]
+        if not _NAME.fullmatch(name) or not isinstance(entry, dict):
+            return None
+        digest = entry.get("digest")
+        usable = isinstance(digest, str) and _DIGEST.fullmatch(digest) is not None
+        found.append(Distribution(name, digest if usable else ""))
+    return found
+
+
+def own_tag(index: int, name: str) -> str:
+    """A distribution's image tag: `latest` for the default (listed first)."""
+    return DEFAULT_IMAGE_TAG if index == 0 else name
+
+
+def own_project(index: int, name: str) -> str:
+    """A distribution's compose project: plain for the default (listed first)."""
+    return DEFAULT_PROJECT if index == 0 else "{}-{}".format(DEFAULT_PROJECT, name)
+
+
+def unique(values: Sequence[str]) -> List[str]:
+    """The non-empty values, each once, in their first order."""
+    seen = []  # type: List[str]
+    for value in values:
+        if value and value not in seen:
+            seen.append(value)
+    return seen
+
+
+class Wanted(NamedTuple):
+    """Everything to look for: projects, then image names, legacy tags, bases."""
+
+    projects: List[str]
+    images: List[str]
+    legacy: List[str]
+    bases: List[str]
+
+
+def wanted(
+    distributions: Optional[Sequence[Distribution]],
+    environ: Dict[str, str],
+    dockerfile: str,
+) -> Wanted:
+    """What to look for, from the table and the environment's own settings.
+
+    With a table: every distribution's project, image, legacy tag and base,
+    plus any explicit project, tag or digest in the environment that is not
+    one of them.  Without: the environment's (or the default's) alone, and the
+    Dockerfile's base, which is what uninstall did before the table existed.
+    """
+    image_name = environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME
+    registry = environ.get("ROS_REGISTRY") or DEFAULT_ROS_REGISTRY
+    env_project = environ.get("COMPOSE_PROJECT_NAME", "")
+    env_tag = environ.get("IMAGE_TAG", "")
+    env_distro = environ.get("ROS_DISTRO", "")
+    env_digest = environ.get("ROS_BASE_DIGEST", "")
+    selftest = environ.get("SELFTEST_PROJECT") or DEFAULT_SELFTEST_PROJECT
+
+    if distributions is None:
+        image = "{}:{}".format(image_name, DEFAULT_IMAGE_TAG)
+        legacy = "{}:{}".format(LEGACY_IMAGE_NAME, env_distro or DEFAULT_ROS_DISTRO)
+        return Wanted(
+            projects=unique([env_project or DEFAULT_PROJECT, selftest]),
+            images=[image],
+            legacy=[legacy] if legacy != image else [],
+            bases=unique([base_image_ref(registry, env_digest or base_digest(dockerfile))]),
+        )
+
+    listed = list(enumerate(distributions))
+    images = unique(
+        ["{}:{}".format(image_name, own_tag(i, d.name)) for i, d in listed]
+        + (["{}:{}".format(image_name, env_tag)] if env_tag else [])
+    )
+    legacy = [
+        ref
+        for ref in unique(
+            ["{}:{}".format(LEGACY_IMAGE_NAME, d.name) for d in distributions]
+            + (["{}:{}".format(LEGACY_IMAGE_NAME, env_distro)] if env_distro else [])
+        )
+        if ref not in images
+    ]
+    return Wanted(
+        projects=unique([own_project(i, d.name) for i, d in listed] + [env_project, selftest]),
+        images=images,
+        legacy=legacy,
+        bases=unique(
+            [base_image_ref(registry, d.digest) for d in distributions]
+            + [base_image_ref(registry, env_digest)]
+        ),
+    )
 
 
 def base_digest(dockerfile: str) -> str:
@@ -243,35 +376,33 @@ def find_image(engine: Engine, ref: str, names: Sequence[str]) -> List[Item]:
     return []
 
 
+def read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def survey(engine: Engine) -> List[Item]:
     """Everything of the workstation's that exists, in removal order."""
-    projects = [
-        os.environ.get("COMPOSE_PROJECT_NAME") or DEFAULT_PROJECT,
-        os.environ.get("SELFTEST_PROJECT") or DEFAULT_SELFTEST_PROJECT,
-    ]
-    image = "{}:{}".format(os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME, IMAGE_TAG)
-    legacy = "{}:{}".format(LEGACY_IMAGE_NAME, os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO)
-    try:
-        dockerfile = (REPO / "Dockerfile").read_text()
-    except OSError:
-        dockerfile = ""
-    base = base_image_ref(
-        os.environ.get("ROS_REGISTRY") or DEFAULT_ROS_REGISTRY,
-        os.environ.get("ROS_BASE_DIGEST") or base_digest(dockerfile),
+    table = read_text(TABLE_PATH)
+    want = wanted(
+        None if table is None else parse_distributions(table),
+        dict(os.environ),
+        read_text(REPO / "Dockerfile") or "",
     )
 
     items = []  # type: List[Item]
-    for project in projects:
+    for project in want.projects:
         items += find_containers(engine, project)
-    for project in projects:
+    for project in want.projects:
         items += find_labelled(engine, Kind.VOLUME, project)
-    for project in projects:
+    for project in want.projects:
         items += find_labelled(engine, Kind.NETWORK, project)
     # Podman names a locally built image localhost/<name>.
-    items += find_image(engine, image, [image, "localhost/" + image])
-    if legacy != image:
-        items += find_image(engine, legacy, [legacy, "localhost/" + legacy])
-    if base:
+    for image in want.images + want.legacy:
+        items += find_image(engine, image, [image, "localhost/" + image])
+    for base in want.bases:
         items += find_image(engine, base, [base])
     return items
 

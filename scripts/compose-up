@@ -6,25 +6,32 @@ does not -- it only creates containers that are missing.  Without this check,
 `make image` followed by `make up` keeps running the OLD image on Podman, with
 no warning.  Comparing image ids here gives both engines Docker's behaviour.
 
-Expects COMPOSE and ENGINE from the Makefile.
+Expects COMPOSE and ENGINE from the Makefile, and IMAGE_TAG and NOVNC_PORT
+when the ROS distribution is not the default.
 
 Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
 """
 
+import json
 import os
 import signal
 import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import FrozenSet, List, Optional, Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The image compose.yaml names: ${IMAGE_NAME:-<default>}:latest.  The tag is
-# fixed, not the ROS distribution; keep both in step with compose.yaml.
+# The image compose.yaml names: ${IMAGE_NAME:-<default>}:${IMAGE_TAG:-latest}.
+# IMAGE_TAG is the ROS distribution's own tag (make sets it from distros.json);
+# keep both in step with compose.yaml.
 DEFAULT_IMAGE_NAME = "ghcr.io/durantschoon/ros2-classroom"
-IMAGE_TAG = "latest"
+DEFAULT_IMAGE_TAG = "latest"
+
+# Every distribution has a host port of its own there; a busy port is never
+# answered with another distribution's.
+TABLE_PATH = REPO / "distros.json"
 
 # The `name:` in compose.yaml, used when nothing overrides the project.
 DEFAULT_PROJECT = "ros2-tutorials"
@@ -136,25 +143,44 @@ def echoed(compose: str, recreate: Sequence[str]) -> str:
     return "+ {} up -d{}".format(compose, tail)
 
 
-def port_to_suggest(port: str) -> str:
-    """The next host port up that is not the self-test's; "" when port is no number."""
+def table_ports(text: str) -> FrozenSet[int]:
+    """The host port of every distribution in distros.json; none if unreadable."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return frozenset()
+    entries = data.get("distros") if isinstance(data, dict) else None
+    if not isinstance(entries, dict):
+        return frozenset()
+    return frozenset(
+        entry["port"]
+        for entry in entries.values()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("port"), int)
+        and not isinstance(entry.get("port"), bool)
+    )
+
+
+def port_to_suggest(port: str, taken: FrozenSet[int] = frozenset()) -> str:
+    """The next host port up that is neither the self-test's nor in `taken`, the
+    other distributions' ports; "" when port is no number."""
     try:
         candidate = int(port) + 1
     except ValueError:
         return ""
-    if candidate == SELFTEST_NOVNC_PORT:
+    while candidate == SELFTEST_NOVNC_PORT or candidate in taken:
         candidate += 1
     return str(candidate)
 
 
-def busy_port_hint(port: str) -> List[str]:
+def busy_port_hint(port: str, taken: FrozenSet[int] = frozenset()) -> List[str]:
     """What to say when `up` fails: by far the likeliest cause is a taken port."""
     lines = [
         "",
         "The desktop did not start. If the error above says the port is already",
         "allocated, something else is using host port {}.".format(port),
     ]
-    suggestion = port_to_suggest(port)
+    suggestion = port_to_suggest(port, taken)
     if suggestion:
         lines += [
             "Move the desktop to another one, and open it there:",
@@ -206,6 +232,13 @@ def running_image_id(engine: Engine, container: str) -> str:
     return "" if found is None else found
 
 
+def read_table_ports() -> FrozenSet[int]:
+    try:
+        return table_ports(TABLE_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return frozenset()
+
+
 def required(name: str) -> str:
     value = os.environ.get(name, "")
     if not value:
@@ -233,7 +266,10 @@ def main() -> int:
         return EXIT_USAGE
 
     compose_words = compose.split()
-    image = "{}:{}".format(os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME, IMAGE_TAG)
+    image = "{}:{}".format(
+        os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME,
+        os.environ.get("IMAGE_TAG") or DEFAULT_IMAGE_TAG,
+    )
 
     current = image_id(engine, image)
     container = desktop_container(
@@ -260,7 +296,10 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     if status != 0:
-        for line in busy_port_hint(os.environ.get("NOVNC_PORT") or DEFAULT_NOVNC_PORT):
+        hint = busy_port_hint(
+            os.environ.get("NOVNC_PORT") or DEFAULT_NOVNC_PORT, read_table_ports()
+        )
+        for line in hint:
             print(line, file=sys.stderr)
     # A compose killed by a signal reports -N; the shell convention is 128+N.
     return status if status >= 0 else 128 - status

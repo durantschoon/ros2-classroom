@@ -22,19 +22,21 @@ SERVICE ?= desktop
 # The ROS distribution: ROS_DISTRO=<name> on the command line, in the
 # environment, or in .env, else the default in distros.json (`make distros`
 # lists them).  scripts/distros resolves the name into the base-image digest,
-# the image tag, and a compose project of its own, hence its own /workspace;
-# all four are exported so every compose command sees them.  make does not pass
-# command-line variables to $(shell), so the four the resolver reads are handed
-# over explicitly.  An unsupported name stops every target with the resolver's
-# own message.
+# the image tag, a compose project of its own, hence its own /workspace, and a
+# noVNC host port of its own (NOVNC_PORT), so several desktops can run at once;
+# all five are exported so every compose command sees them.  make does not pass
+# command-line variables to $(shell), so the five the resolver reads are handed
+# over explicitly; an explicit one wins.  An unsupported name stops every target
+# with the resolver's own message.
 DISTRO_INPUTS = ROS_DISTRO='$(ROS_DISTRO)' ROS_BASE_DIGEST='$(ROS_BASE_DIGEST)' \
-	IMAGE_TAG='$(IMAGE_TAG)' COMPOSE_PROJECT_NAME='$(COMPOSE_PROJECT_NAME)'
+	IMAGE_TAG='$(IMAGE_TAG)' COMPOSE_PROJECT_NAME='$(COMPOSE_PROJECT_NAME)' \
+	NOVNC_PORT='$(NOVNC_PORT)'
 DISTRO_ENV := $(shell $(DISTRO_INPUTS) ./scripts/distros env --make 2>/dev/null)
 ifeq ($(DISTRO_ENV),)
 $(error $(shell $(DISTRO_INPUTS) ./scripts/distros env --make 2>&1 >/dev/null))
 endif
 $(foreach setting,$(DISTRO_ENV),$(eval export $(setting)))
-NOVNC_PORT ?= 6080
+# After the resolution, so the URL is the chosen distribution's port.
 URL := http://localhost:$(NOVNC_PORT)
 # reconnect=true: noVNC drops the connection after laptop sleep or a network
 # blip.  Nothing in the desktop stops when that happens, so reconnect on our own
