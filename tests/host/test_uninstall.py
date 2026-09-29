@@ -9,9 +9,11 @@ YES=1 or a typed confirmation; and it leaves the shared build cache alone.
 import re
 import unittest
 
-from fakes import REPO, ScriptTestCase, rule
+from fakes import COMPOSE_IMAGE, COMPOSE_IMAGE_TAG, REPO, ScriptTestCase, rule
 
-IMAGE = "ros2-tutorials:lyrical"
+IMAGE = COMPOSE_IMAGE
+# What builds were tagged before compose.yaml named the published image.
+LEGACY_IMAGE = "ros2-tutorials:lyrical"
 LOCAL_IMAGE = "localhost/" + IMAGE
 DIGEST = re.search(
     r"^ARG ROS_BASE_DIGEST=(\S+)", (REPO / "Dockerfile").read_text(), re.MULTILINE
@@ -102,6 +104,21 @@ class UninstallTests(ScriptTestCase):
         self.assertStatus(run, 0)
         self.assertIn(["image", "rm", LOCAL_IMAGE, BASE], self.removals("podman"))
 
+    def test_the_published_image_and_a_legacy_build_are_both_removed(self):
+        # The image compose pulls is the one taking the disk; a build tagged
+        # the old way may still sit beside it.
+        self.sandbox.fake("docker", rules=nothing_rules()[:3] + [
+            rule(["image", "inspect", "--format", "{{.Size}}", IMAGE], stdout="4500000000\n"),
+            rule(["image", "inspect", "--format", "{{.Size}}", LEGACY_IMAGE],
+                 stdout="4400000000\n"),
+            rule(["image", "inspect"], exit_code=1),
+        ])
+        run = self.run_script(ENGINE="docker", YES="1")
+        self.assertStatus(run, 0)
+        self.assertHas(run, IMAGE + "  (4.5 GB)")
+        self.assertHas(run, LEGACY_IMAGE + "  (4.4 GB)")
+        self.assertEqual([["image", "rm", IMAGE, LEGACY_IMAGE]], self.removals())
+
     def test_image_name_and_project_overrides_are_honoured(self):
         self.sandbox.fake("docker", rules=[
             rule(["ps", "-a", "--filter", "label=com.docker.compose.project=mine"],
@@ -111,7 +128,10 @@ class UninstallTests(ScriptTestCase):
                  stdout="mine_ros-home\n"),
             rule(["volume", "ls"], stdout=""),
             rule(["network", "ls"], stdout=""),
-            rule(["image", "inspect", "--format", "{{.Size}}", "custom:jazzy"], stdout="5\n"),
+            rule(["image", "inspect", "--format", "{{.Size}}", "custom:" + COMPOSE_IMAGE_TAG],
+                 stdout="5\n"),
+            rule(["image", "inspect", "--format", "{{.Size}}", "ros2-tutorials:jazzy"],
+                 stdout="7\n"),
             rule(["image", "inspect"], exit_code=1),
         ])
         run = self.run_script(ENGINE="docker", YES="1", COMPOSE_PROJECT_NAME="mine",
@@ -119,7 +139,8 @@ class UninstallTests(ScriptTestCase):
         self.assertStatus(run, 0)
         self.assertEqual([["rm", "-f", "mine-desktop-1"],
                           ["volume", "rm", "mine_ros-home"],
-                          ["image", "rm", "custom:jazzy"]], self.removals())
+                          ["image", "rm", "custom:" + COMPOSE_IMAGE_TAG, "ros2-tutorials:jazzy"]],
+                         self.removals())
 
     # --- asking first -------------------------------------------------------
 

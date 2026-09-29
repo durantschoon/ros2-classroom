@@ -36,6 +36,20 @@ REAL_PATH = os.environ.get("PATH", os.defpath)
 # because it was part of this module's surface.
 ARG_SEP = "\x00"
 
+# The image compose.yaml names when IMAGE_NAME is unset, read from compose.yaml
+# itself: the scripts must find the image compose actually builds and pulls,
+# so a rename there fails these tests until the scripts follow.
+_COMPOSE_IMAGE = re.search(
+    r"^\s*image: \$\{IMAGE_NAME:-([^}]+)\}:(\S+)\s*$",
+    (REPO / "compose.yaml").read_text(),
+    re.MULTILINE,
+)
+if _COMPOSE_IMAGE is None:
+    raise RuntimeError("compose.yaml no longer names its image as ${IMAGE_NAME:-name}:tag")
+COMPOSE_IMAGE_NAME = _COMPOSE_IMAGE.group(1)
+COMPOSE_IMAGE_TAG = _COMPOSE_IMAGE.group(2)
+COMPOSE_IMAGE = "{}:{}".format(COMPOSE_IMAGE_NAME, COMPOSE_IMAGE_TAG)
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 

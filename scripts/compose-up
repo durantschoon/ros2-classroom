@@ -21,8 +21,10 @@ from typing import List, Optional, Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 
-DEFAULT_IMAGE_NAME = "ros2-tutorials"
-DEFAULT_ROS_DISTRO = "lyrical"
+# The image compose.yaml names: ${IMAGE_NAME:-<default>}:latest.  The tag is
+# fixed, not the ROS distribution; keep both in step with compose.yaml.
+DEFAULT_IMAGE_NAME = "ghcr.io/durantschoon/ros2-classroom"
+IMAGE_TAG = "latest"
 
 # The `name:` in compose.yaml, used when nothing overrides the project.
 DEFAULT_PROJECT = "ros2-tutorials"
@@ -231,10 +233,7 @@ def main() -> int:
         return EXIT_USAGE
 
     compose_words = compose.split()
-    image = "{}:{}".format(
-        os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME,
-        os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO,
-    )
+    image = "{}:{}".format(os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME, IMAGE_TAG)
 
     current = image_id(engine, image)
     container = desktop_container(

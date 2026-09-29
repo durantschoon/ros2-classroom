@@ -34,7 +34,14 @@ from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 REPO = Path(__file__).resolve().parent.parent
 
-DEFAULT_IMAGE_NAME = "ros2-tutorials"
+# The image compose.yaml names: ${IMAGE_NAME:-<default>}:latest.  The tag is
+# fixed, not the ROS distribution; keep both in step with compose.yaml.
+DEFAULT_IMAGE_NAME = "ghcr.io/durantschoon/ros2-classroom"
+IMAGE_TAG = "latest"
+
+# How images were tagged before compose.yaml named the published image:
+# <legacy name>:<ROS distribution>.  Builds from then may still be on disk.
+LEGACY_IMAGE_NAME = "ros2-tutorials"
 DEFAULT_ROS_DISTRO = "lyrical"
 DEFAULT_ROS_REGISTRY = "docker.io/library"
 
@@ -242,10 +249,8 @@ def survey(engine: Engine) -> List[Item]:
         os.environ.get("COMPOSE_PROJECT_NAME") or DEFAULT_PROJECT,
         os.environ.get("SELFTEST_PROJECT") or DEFAULT_SELFTEST_PROJECT,
     ]
-    image = "{}:{}".format(
-        os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME,
-        os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO,
-    )
+    image = "{}:{}".format(os.environ.get("IMAGE_NAME") or DEFAULT_IMAGE_NAME, IMAGE_TAG)
+    legacy = "{}:{}".format(LEGACY_IMAGE_NAME, os.environ.get("ROS_DISTRO") or DEFAULT_ROS_DISTRO)
     try:
         dockerfile = (REPO / "Dockerfile").read_text()
     except OSError:
@@ -264,6 +269,8 @@ def survey(engine: Engine) -> List[Item]:
         items += find_labelled(engine, Kind.NETWORK, project)
     # Podman names a locally built image localhost/<name>.
     items += find_image(engine, image, [image, "localhost/" + image])
+    if legacy != image:
+        items += find_image(engine, legacy, [legacy, "localhost/" + legacy])
     if base:
         items += find_image(engine, base, [base])
     return items

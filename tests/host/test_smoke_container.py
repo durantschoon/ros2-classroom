@@ -32,7 +32,7 @@ import unittest
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from fakes import REPO, Run, Sandbox, rule, strip_ansi
+from fakes import COMPOSE_IMAGE, REPO, Run, Sandbox, rule, strip_ansi
 
 SCRIPT = REPO / "scripts" / "smoke-container"
 
@@ -836,7 +836,7 @@ class EngineDetection(SmokeTest):
         self.assertTrue(inspects, case.sandbox.argv("podman"))
         self.assertIn("--format", inspects[0])
         self.assertTrue(
-            any(arg.endswith("ros2-tutorials:lyrical") for arg in inspects[0]), inspects[0]
+            any(arg.endswith(COMPOSE_IMAGE) for arg in inspects[0]), inspects[0]
         )
 
 

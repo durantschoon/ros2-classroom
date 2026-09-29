@@ -42,7 +42,7 @@ If port 6080 is busy, `make up NOVNC_PORT=6081` moves the desktop -- but 6081 is
       that skip on WSL actually run, and take the macOS `open` path
 - [ ] `make doctor` reports an engine and passes resources
 - [ ] `make image` completes — **watch:** it must build `linux/arm64` natively
-- [ ] Confirm the arch: `docker image inspect ros2-tutorials:lyrical --format '{{.Architecture}}'` → `arm64`
+- [ ] Confirm the arch: `docker image inspect ghcr.io/durantschoon/ros2-classroom:latest --format '{{.Architecture}}'` → `arm64`
 - [ ] `make up` then `make open` — browser opens the desktop
 - [ ] Desktop renders: Openbox background, a terminal already open
 - [ ] Right-click → turtlesim_node — window appears

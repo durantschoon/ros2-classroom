@@ -7,9 +7,9 @@ are the behaviour to preserve.
 
 import unittest
 
-from fakes import ScriptTestCase, rule
+from fakes import COMPOSE_IMAGE, COMPOSE_IMAGE_TAG, ScriptTestCase, rule
 
-IMAGE = "ros2-tutorials:lyrical"
+IMAGE = COMPOSE_IMAGE
 LOCAL_IMAGE = "localhost/" + IMAGE
 CONTAINER = "c0ffeeba5e"
 
@@ -202,10 +202,12 @@ class ComposeUpTests(ScriptTestCase):
             self.sandbox.argv("compose-stub"),
         )
 
-    def test_the_image_name_and_distro_can_be_overridden(self):
+    def test_the_image_name_can_be_overridden_but_not_by_the_distro(self):
+        # compose.yaml tags the image :latest whatever ROS_DISTRO says.
+        custom = "custom:" + COMPOSE_IMAGE_TAG
         self.sandbox.fake(
             "podman",
-            rules=[rule(["image", "inspect", "--format", "{{.Id}}", "custom:jazzy"],
+            rules=[rule(["image", "inspect", "--format", "{{.Id}}", custom],
                         stdout="id\n"),
                    rule(["image"], exit_code=1),
                    rule(["ps"], stdout=""),
@@ -216,7 +218,7 @@ class ComposeUpTests(ScriptTestCase):
                               IMAGE_NAME="custom", ROS_DISTRO="jazzy")
         self.assertStatus(run, 0)
         inspects = [c for c in self.sandbox.argv("podman") if c and c[0] == "image"]
-        self.assertEqual([["image", "inspect", "--format", "{{.Id}}", "custom:jazzy"]], inspects)
+        self.assertEqual([["image", "inspect", "--format", "{{.Id}}", custom]], inspects)
 
     # --- the echoed command ------------------------------------------------
 
