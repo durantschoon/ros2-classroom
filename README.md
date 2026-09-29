@@ -19,6 +19,15 @@ installed, preferring Docker. Run `make doctor` to check your host, and see
 [docs/host-requirements.md](docs/host-requirements.md) — with older Podman you
 also need `pip install --user -r requirements-host.txt`.
 
+> **On Windows, read `make` as `.\ros2.ps1`.** Every `make TARGET` in this
+> README and in `docs/` works in PowerShell as `.\ros2.ps1 TARGET` (or
+> `.\ros2.bat TARGET`), with the same arguments:
+> `make run PKG=my_robot NODE=talker` becomes
+> `.\ros2.ps1 run PKG=my_robot NODE=talker`. You need neither Make nor WSL,
+> only Docker Desktop. The one exception is the maintainer targets (`selftest`,
+> `check`, `lint`, `digest`), which are for working on this repo, not in it.
+> `.\ros2.ps1 help` lists everything, with the docker command each one runs.
+
 ## How this differs (Prior art)
 
 ROS 2 plus noVNC in a container already exists:
@@ -89,11 +98,13 @@ Then:
 
 ```powershell
 .\ros2.ps1 help          # every command, and the docker command it runs
-.\ros2.ps1 package -Pkg my_robot -Template pubsub
-.\ros2.ps1 build -Pkg my_robot
-.\ros2.ps1 run -Pkg my_robot -Node talker
-.\ros2.ps1 test -Pkg my_robot
+.\ros2.ps1 package PKG=my_robot TEMPLATE=pubsub
+.\ros2.ps1 build PKG=my_robot
+.\ros2.ps1 run PKG=my_robot NODE=talker
+.\ros2.ps1 test PKG=my_robot
 ```
+
+PowerShell-style parameters work too (`-Pkg my_robot -Node talker`).
 
 ## Commands
 

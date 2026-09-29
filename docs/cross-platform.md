@@ -70,16 +70,30 @@ Run the repository natively from Windows using the provided scripts. You do not 
 
 **The One-Click Desktop:** Once Docker Desktop is running, double-click `ros2.bat` in the repository folder. This will build the container, start the desktop, and automatically open it in your default Windows browser.
 
-**PowerShell CLI:** If you want to use the repository's helper targets (like `build`, `test`, or `turtlesim-teleop`), use the PowerShell script directly:
+**PowerShell CLI:** every student-facing `make TARGET` in these docs is
+`.\ros2.ps1 TARGET`, with the same arguments; only the maintainer targets
+(`selftest`, `check`, `lint`, `digest`) have no Windows form. Like make, each
+command prints the docker command it runs before running it.
 
 | Action | PowerShell command |
 |---|---|
 | Start desktop | `.\ros2.ps1 up` then `.\ros2.ps1 open` (or just `.\ros2.bat`) |
 | Enter ROS shell | `.\ros2.ps1 shell` |
 | Drive turtlesim | `.\ros2.ps1 turtlesim-teleop` |
-| Build your code | `.\ros2.ps1 build -Pkg my_robot` |
+| Build your code | `.\ros2.ps1 build PKG=my_robot` |
 | Stop containers | `.\ros2.ps1 down` |
+| Check this machine | `.\ros2.ps1 doctor` |
+| Free the disk afterwards | `.\ros2.ps1 uninstall` |
 | List every command | `.\ros2.ps1 help` |
+| Help for one command | `.\ros2.ps1 build help`, `.\ros2.ps1 run examples` |
+
+Arguments can be written either way: `PKG=my_robot NODE=talker`, as in the
+make examples, or `-Pkg my_robot -Node talker`. Any other `NAME=value`, such
+as `NOVNC_PORT=6081`, is set in the environment for that run, as make does.
+
+Two small differences from make on Linux and macOS: `.\ros2.ps1 up` pulls the
+prebuilt image rather than expecting `make image` first, and `doctor` checks
+Docker Desktop only (Windows has no Podman path).
 
 If you happen to clone into a Windows path and prefer to run from a WSL 2 shell anyway, the `make` targets will still detect your environment and work. However, keeping the repository inside the WSL filesystem (`~/...`, not `/mnt/c/...`) is highly recommended if you choose the WSL route, as build context reads across the 9p mount are noticeably slow.
 
