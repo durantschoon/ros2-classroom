@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+"""Resolve ROS_DISTRO into everything compose needs, from distros.json.
+
+    distros env [--make]   the settings for the chosen distribution
+    distros list           every supported distribution
+    distros refresh        fetch each distribution's current base digest
+
+ROS_DISTRO is the one knob.  It comes from the environment (make hands its
+command-line value over that way), else from .env, else from the table's
+default, and resolves to four settings:
+
+    ROS_DISTRO             the name, checked against the table
+    ROS_BASE_DIGEST        the digest of ros:<distro>-ros-base it builds FROM
+    IMAGE_TAG              <distro>, or `latest` for the default distribution
+    COMPOSE_PROJECT_NAME   ros2-tutorials-<distro>, or plain ros2-tutorials for
+                           the default
+
+Each distribution therefore gets its own image tag and its own compose
+project, hence its own /workspace volume.  The default's names are aliases
+that carry no distribution: they are what the workstation used before it had
+more than one, so a student's existing volumes stay theirs.  A non-empty
+ROS_BASE_DIGEST, IMAGE_TAG or COMPOSE_PROJECT_NAME already in the environment
+is passed through unchanged (the self-test sets its own project, for one).
+
+`env` prints `export NAME=value` lines for a shell to eval; `--make` prints
+bare NAME=value lines for the Makefile to export.
+
+The table and .env are found next to this script's directory
+(../distros.json, ../.env), never through the working directory.
+
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
+
+import enum
+import json
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+
+HERE = Path(__file__).resolve().parent
+TABLE_PATH = HERE.parent / "distros.json"
+DOTENV_PATH = HERE.parent / ".env"
+BASE_IMAGE_DIGEST = HERE / "base-image-digest"
+
+# The default distribution's names: what the workstation used before it
+# supported more than one distribution.
+DEFAULT_TAG = "latest"
+DEFAULT_PROJECT = "ros2-tutorials"
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+
+USAGE = "usage: distros env [--make] | distros list | distros refresh"
+
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_NAME = re.compile(r"[a-z][a-z0-9_-]*")
+
+
+class Subcommand(enum.Enum):
+    ENV = "env"
+    ENV_MAKE = "env --make"
+    LIST = "list"
+    REFRESH = "refresh"
+
+
+class Distro(NamedTuple):
+    name: str
+    ubuntu: str
+    digest: str
+
+
+class Table(NamedTuple):
+    """distros.json, parsed.  `distros` is sorted by name."""
+
+    comment: Tuple[str, ...]
+    default: str
+    distros: Tuple[Distro, ...]
+
+    def get(self, name: str) -> Optional[Distro]:
+        for distro in self.distros:
+            if distro.name == name:
+                return distro
+        return None
+
+    def names(self) -> List[str]:
+        return [distro.name for distro in self.distros]
+
+
+class Settings(NamedTuple):
+    ros_distro: str
+    ros_base_digest: str
+    image_tag: str
+    compose_project_name: str
+
+    def pairs(self) -> List[Tuple[str, str]]:
+        return [
+            ("ROS_DISTRO", self.ros_distro),
+            ("ROS_BASE_DIGEST", self.ros_base_digest),
+            ("IMAGE_TAG", self.image_tag),
+            ("COMPOSE_PROJECT_NAME", self.compose_project_name),
+        ]
+
+
+class Problem(NamedTuple):
+    """An expected failure: a plain-English message and the exit code for it."""
+
+    message: str
+    status: int
+
+
+# --- pure core --------------------------------------------------------------
+
+
+def parse_args(argv: Sequence[str]) -> Union[Subcommand, Problem]:
+    words = list(argv)
+    if words == ["env"]:
+        return Subcommand.ENV
+    if words == ["env", "--make"]:
+        return Subcommand.ENV_MAKE
+    if words == ["list"]:
+        return Subcommand.LIST
+    if words == ["refresh"]:
+        return Subcommand.REFRESH
+    return Problem(USAGE, EXIT_USAGE)
+
+
+def parse_table(text: str) -> Union[Table, str]:
+    """The table in distros.json, or a one-line description of what is wrong."""
+    try:
+        data = json.loads(text)
+    except ValueError as err:
+        return "not valid JSON ({})".format(err)
+    if not isinstance(data, dict):
+        return "expected a JSON object at the top level"
+
+    comment = data.get("_comment", [])
+    if not isinstance(comment, list) or not all(isinstance(c, str) for c in comment):
+        return '"_comment" must be a list of strings'
+
+    entries = data.get("distros")
+    if not isinstance(entries, dict) or not entries:
+        return 'missing "distros", an object of distribution names'
+    distros = []  # type: List[Distro]
+    for name in sorted(entries):
+        entry = entries[name]
+        if not _NAME.fullmatch(name):
+            return "{!r} is not a distribution name".format(name)
+        if not isinstance(entry, dict):
+            return '"{}" must be an object with "ubuntu" and "digest"'.format(name)
+        ubuntu = entry.get("ubuntu")
+        digest = entry.get("digest")
+        if not isinstance(ubuntu, str) or not ubuntu:
+            return '"{}" has no "ubuntu" version'.format(name)
+        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+            return '"{}" has no "digest" of the form sha256:<64 hex digits>'.format(name)
+        distros.append(Distro(name, ubuntu, digest))
+
+    default = data.get("default")
+    if not isinstance(default, str) or not default:
+        return 'missing "default", the name of the default distribution'
+    table = Table(tuple(comment), default, tuple(distros))
+    if table.get(default) is None:
+        return 'the default, "{}", is not in "distros"'.format(default)
+    return table
+
+
+def render_table(table: Table) -> str:
+    """distros.json as `refresh` writes it: sorted names, one line each,
+    two-space indent, trailing newline.  One changed digest is one changed line.
+    """
+    lines = ["{", '  "_comment": [']
+    lines.extend(
+        "    {}{}".format(json.dumps(text), "," if index < len(table.comment) - 1 else "")
+        for index, text in enumerate(table.comment)
+    )
+    lines.append("  ],")
+    lines.append('  "default": {},'.format(json.dumps(table.default)))
+    lines.append('  "distros": {')
+    lines.extend(
+        '    {}: {{"ubuntu": {}, "digest": {}}}{}'.format(
+            json.dumps(distro.name),
+            json.dumps(distro.ubuntu),
+            json.dumps(distro.digest),
+            "," if index < len(table.distros) - 1 else "",
+        )
+        for index, distro in enumerate(table.distros)
+    )
+    lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def parse_dotenv(text: str) -> Dict[str, str]:
+    """NAME=value pairs as compose reads .env: blank lines and comments skipped,
+    one pair of matching quotes stripped.  A later line wins.
+    """
+    values = {}  # type: Dict[str, str]
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[name.strip()] = value
+    return values
+
+
+def chosen_name(environ: Dict[str, str], dotenv: Dict[str, str], table: Table) -> str:
+    """ROS_DISTRO from the environment, else .env, else the default.  Empty is unset."""
+    return environ.get("ROS_DISTRO") or dotenv.get("ROS_DISTRO") or table.default
+
+
+def unsupported(name: str, table: Table) -> Problem:
+    return Problem(
+        "ROS_DISTRO={} is not supported. Choose one of: {}".format(
+            name, " ".join(sorted(table.names()))
+        ),
+        EXIT_USAGE,
+    )
+
+
+def own_tag(distro: Distro, table: Table) -> str:
+    return DEFAULT_TAG if distro.name == table.default else distro.name
+
+
+def own_project(distro: Distro, table: Table) -> str:
+    return DEFAULT_PROJECT if distro.name == table.default else "{}-{}".format(
+        DEFAULT_PROJECT, distro.name
+    )
+
+
+def resolve(name: str, table: Table, environ: Dict[str, str]) -> Union[Settings, Problem]:
+    """The four settings for `name`, keeping any explicit ones in `environ`."""
+    distro = table.get(name)
+    if distro is None:
+        return unsupported(name, table)
+    return Settings(
+        ros_distro=distro.name,
+        ros_base_digest=environ.get("ROS_BASE_DIGEST") or distro.digest,
+        image_tag=environ.get("IMAGE_TAG") or own_tag(distro, table),
+        compose_project_name=environ.get("COMPOSE_PROJECT_NAME") or own_project(distro, table),
+    )
+
+
+def render_env(settings: Settings, for_make: bool) -> str:
+    if for_make:
+        return "".join("{}={}\n".format(name, value) for name, value in settings.pairs())
+    return "".join(
+        "export {}={}\n".format(name, shlex.quote(value)) for name, value in settings.pairs()
+    )
+
+
+def render_list(table: Table) -> str:
+    header = ("DISTRO", "UBUNTU", "IMAGE TAG", "COMPOSE PROJECT")
+    rows = [
+        (d.name, d.ubuntu, own_tag(d, table), own_project(d, table)) for d in table.distros
+    ]
+    widths = [max(len(row[i]) for row in [header] + rows) for i in range(len(header))]
+    lines = []
+    for row, is_default in [(header, False)] + [(r, r[0] == table.default) for r in rows]:
+        cells = "  ".join(cell.ljust(width) for cell, width in zip(row, widths))
+        lines.append((cells + "  (default)") if is_default else cells.rstrip())
+    return "\n".join(lines) + "\n"
+
+
+def refresh_line(name: str, width: int, old: str, new: Optional[str]) -> str:
+    """One distribution's outcome: unchanged, old -> new, or kept."""
+    if new is None:
+        outcome = "kept {} (could not fetch)".format(old)
+    elif new == old:
+        outcome = "unchanged"
+    else:
+        outcome = "{} -> {}".format(old, new)
+    return "{}  {}".format(name.ljust(width), outcome)
+
+
+def with_digests(table: Table, digests: Dict[str, str]) -> Table:
+    """The table with each named distribution's digest replaced."""
+    return table._replace(
+        distros=tuple(
+            d._replace(digest=digests.get(d.name, d.digest)) for d in table.distros
+        )
+    )
+
+
+# --- imperative shell -------------------------------------------------------
+
+
+def complain(message: str) -> None:
+    # Flushed first so a message lands after the lines it follows, even piped.
+    sys.stdout.flush()
+    print(message, file=sys.stderr)
+
+
+def read_table() -> Union[Table, Problem]:
+    try:
+        text = TABLE_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        return Problem("{}: cannot read it ({})".format(TABLE_PATH, err), EXIT_FAILED)
+    parsed = parse_table(text)
+    if isinstance(parsed, str):
+        return Problem("{}: {}".format(TABLE_PATH, parsed), EXIT_FAILED)
+    return parsed
+
+
+def read_dotenv() -> Union[Dict[str, str], Problem]:
+    """.env's pairs, or none when there is no .env (it is optional)."""
+    try:
+        text = DOTENV_PATH.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return {}
+    except OSError as err:
+        return Problem("{}: cannot read it ({})".format(DOTENV_PATH, err), EXIT_FAILED)
+    return parse_dotenv(text)
+
+
+def fetch_digest(name: str) -> Optional[str]:
+    """The current digest from base-image-digest, or None.  Its own errors
+    reach stderr; an answer that is not a digest is reported, never used.
+    """
+    try:
+        proc = subprocess.run(
+            [str(BASE_IMAGE_DIGEST), name],
+            stdout=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as err:
+        complain("could not run {}: {}".format(BASE_IMAGE_DIGEST, err))
+        return None
+    if proc.returncode != 0:
+        return None
+    answer = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not _DIGEST.fullmatch(answer):
+        complain("{}: base-image-digest answered {!r}, not a sha256 digest".format(name, answer))
+        return None
+    return answer
+
+
+def write_table(table: Table) -> Optional[Problem]:
+    """Replace distros.json in one step, keeping its permissions."""
+    try:
+        mode = TABLE_PATH.stat().st_mode & 0o777
+        handle, temporary = tempfile.mkstemp(prefix=".distros.", dir=str(TABLE_PATH.parent))
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(render_table(table))
+        os.chmod(temporary, mode)
+        os.replace(temporary, str(TABLE_PATH))
+    except OSError as err:
+        return Problem("{}: cannot write it ({})".format(TABLE_PATH, err), EXIT_FAILED)
+    return None
+
+
+def run_refresh(table: Table) -> int:
+    width = max(len(name) for name in table.names())
+    fetched = {}  # type: Dict[str, str]
+    failed = False
+    for distro in table.distros:
+        digest = fetch_digest(distro.name)
+        if digest is None:
+            failed = True
+        else:
+            fetched[distro.name] = digest
+        print(refresh_line(distro.name, width, distro.digest, digest), flush=True)
+
+    changed = [d.name for d in table.distros if fetched.get(d.name, d.digest) != d.digest]
+    if changed:
+        problem = write_table(with_digests(table, fetched))
+        if problem is not None:
+            complain(problem.message)
+            return problem.status
+        print()
+        print("Updated {}. Rebuild each changed distribution:".format(TABLE_PATH))
+        for name in changed:
+            print("  make image ROS_DISTRO={}".format(name))
+    if failed:
+        complain("Some digests could not be fetched; those entries were kept.")
+        return EXIT_FAILED
+    return EXIT_OK
+
+
+def main(argv: Sequence[str], environ: Dict[str, str]) -> int:
+    if list(argv) in (["-h"], ["--help"]):
+        print(USAGE)
+        return EXIT_OK
+    command = parse_args(argv)
+    if isinstance(command, Problem):
+        complain(command.message)
+        return command.status
+
+    table = read_table()
+    if isinstance(table, Problem):
+        complain(table.message)
+        return table.status
+
+    if command is Subcommand.LIST:
+        sys.stdout.write(render_list(table))
+        return EXIT_OK
+    if command is Subcommand.REFRESH:
+        return run_refresh(table)
+
+    dotenv = read_dotenv()
+    if isinstance(dotenv, Problem):
+        complain(dotenv.message)
+        return dotenv.status
+    settings = resolve(chosen_name(environ, dotenv, table), table, environ)
+    if isinstance(settings, Problem):
+        complain(settings.message)
+        return settings.status
+    sys.stdout.write(render_env(settings, for_make=command is Subcommand.ENV_MAKE))
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    # A reader that stops early (`distros list | head -1`) is not an error.
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main(sys.argv[1:], dict(os.environ)))

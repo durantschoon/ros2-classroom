@@ -188,5 +188,18 @@ class MakeHelpModeTests(unittest.TestCase):
         self.assertIn("Start here", run.out)
 
 
+
+class DistrosRowTests(ScriptTestCase):
+    script = "workstation-help"
+
+    def test_make_distros_is_in_start_here_after_make_image(self):
+        run = self.run_script()
+        start = run.out.index("Start here")
+        every = run.out.index("Every session")
+        image = run.out.index("make image")
+        distros = run.out.index("make distros")
+        self.assertTrue(start < image < distros < every, run.report())
+        self.assertHas(run, "List the ROS 2 distributions; pick one with ROS_DISTRO=name")
+
 if __name__ == "__main__":
     unittest.main()

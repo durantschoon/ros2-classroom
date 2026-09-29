@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # The tag stays human readable, but the digest is what actually pins the build.
-# `make digest` prints the current digest for a distribution; changing ROS_DISTRO
-# requires supplying the matching ROS_BASE_DIGEST.
+# distros.json pairs each supported distribution with its digest; make and
+# ros2.ps1 pass the matching ROS_BASE_DIGEST for the ROS_DISTRO chosen, and
+# `make digest` refreshes them all.  These ARG defaults are the table's default.
 #
 # The registry is spelled out: Podman refuses short names unless the host
 # configures unqualified-search-registries, and Docker resolves the canonical

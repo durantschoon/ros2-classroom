@@ -13,12 +13,14 @@ the engine, and only output, exit status, and the fake's recorded argv are
 asserted on.
 """
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import unittest
 from typing import List
+from typing import Dict
 
 from fakes import REAL_PATH, REPO, Run, ScriptTestCase, strip_ansi
 
@@ -173,6 +175,120 @@ class ConfirmationTests(Ros2Ps1TestCase):
         self.assertEqual(["compose", "down", "-v", "--remove-orphans"],
                          self.sandbox.last_argv("docker"))
 
+
+
+# --- the ROS distribution: the same resolution as scripts/distros ----------------
+
+DISTRO_VARS = ("ROS_DISTRO", "ROS_BASE_DIGEST", "IMAGE_TAG", "COMPOSE_PROJECT_NAME")
+DISTRO_TABLE = json.loads((REPO / "distros.json").read_text())
+
+
+def distro_settings(name: str) -> Dict[str, str]:
+    """What ros2.ps1 should hand docker for the named distribution."""
+    default = name == DISTRO_TABLE["default"]
+    return {
+        "ROS_DISTRO": name,
+        "ROS_BASE_DIGEST": DISTRO_TABLE["distros"][name]["digest"],
+        "IMAGE_TAG": "latest" if default else name,
+        "COMPOSE_PROJECT_NAME": "ros2-tutorials" if default else "ros2-tutorials-" + name,
+    }
+
+
+class DistroTests(Ros2Ps1TestCase):
+    """A temporary copy of ros2.ps1 and distros.json, so a .env can sit beside
+    them without touching the repository."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sandbox.fake("docker", record_env=DISTRO_VARS)
+        self.tree = self.sandbox.root / "tree"
+        self.tree.mkdir()
+        shutil.copy2(str(REPO / "ros2.ps1"), str(self.tree / "ros2.ps1"))
+        shutil.copy2(str(REPO / "distros.json"), str(self.tree / "distros.json"))
+
+    def run_copy(self, *args: str, **overrides: str) -> Run:
+        env = self.sandbox.environ(
+            POWERSHELL_TELEMETRY_OPTOUT="1",
+            POWERSHELL_UPDATECHECK="Off",
+            DOTNET_CLI_TELEMETRY_OPTOUT="1",
+            **overrides
+        )
+        proc = subprocess.run(
+            [str(PWSH), "-NoProfile", "-NonInteractive", "-File", str(self.tree / "ros2.ps1")]
+            + list(args),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+            cwd=str(self.sandbox.root), env=env, check=False, timeout=120,
+        )
+        return Run(proc.returncode,
+                   strip_ansi(proc.stdout.decode("utf-8", errors="replace")),
+                   strip_ansi(proc.stderr.decode("utf-8", errors="replace")))
+
+    def test_a_named_distribution_reaches_docker(self):
+        run = self.run_copy("ps", "ROS_DISTRO=jazzy")
+        self.assertStatus(run, 0)
+        self.assertEqual(distro_settings("jazzy"), self.sandbox.last_recorded_env("docker"))
+
+    def test_nothing_set_gives_docker_the_default(self):
+        run = self.run_copy("ps")
+        self.assertStatus(run, 0)
+        self.assertEqual(distro_settings("lyrical"), self.sandbox.last_recorded_env("docker"))
+        self.assertEqual("latest", self.sandbox.last_recorded_env("docker")["IMAGE_TAG"])
+
+    def test_an_unsupported_distribution_is_refused_before_docker(self):
+        run = self.run_copy("ps", "ROS_DISTRO=foxy")
+        self.assertStatus(run, 2)
+        self.assertIn("ROS_DISTRO=foxy is not supported. Choose one of: "
+                      "humble jazzy kilted lyrical", run.out + run.err, run.report())
+        self.assertFalse(self.sandbox.called("docker"), run.report())
+
+    def test_dotenv_chooses_and_the_environment_beats_it(self):
+        (self.tree / ".env").write_text("# a comment\nROS_DISTRO=\"kilted\"\n")
+        run = self.run_copy("ps")
+        self.assertStatus(run, 0)
+        self.assertEqual(distro_settings("kilted"), self.sandbox.last_recorded_env("docker"))
+        run = self.run_copy("ps", ROS_DISTRO="jazzy")
+        self.assertStatus(run, 0)
+        self.assertEqual(distro_settings("jazzy"), self.sandbox.last_recorded_env("docker"))
+        run = self.run_copy("ps", "ROS_DISTRO=humble")
+        self.assertStatus(run, 0)
+        self.assertEqual(distro_settings("humble"), self.sandbox.last_recorded_env("docker"))
+
+    def test_explicit_settings_are_kept(self):
+        run = self.run_copy("ps", "ROS_DISTRO=jazzy", "IMAGE_TAG=mine",
+                            "COMPOSE_PROJECT_NAME=my-project")
+        self.assertStatus(run, 0)
+        recorded = self.sandbox.last_recorded_env("docker")
+        self.assertEqual("mine", recorded["IMAGE_TAG"])
+        self.assertEqual("my-project", recorded["COMPOSE_PROJECT_NAME"])
+
+    def test_distros_prints_the_table_and_the_hint(self):
+        run = self.run_copy("distros")
+        self.assertStatus(run, 0)
+        self.assertEqual([
+            "DISTRO   UBUNTU  IMAGE TAG  COMPOSE PROJECT",
+            "humble   22.04   humble     ros2-tutorials-humble",
+            "jazzy    24.04   jazzy      ros2-tutorials-jazzy",
+            "kilted   24.04   kilted     ros2-tutorials-kilted",
+            "lyrical  26.04   latest     ros2-tutorials         (default)",
+            "",
+            "Choose one with ROS_DISTRO=<name>, e.g.  .\\ros2.ps1 up ROS_DISTRO=jazzy",
+        ], run.out_lines)
+        self.assertFalse(self.sandbox.called("docker"), run.report())
+
+    def test_help_names_the_distribution_and_project_last(self):
+        run = self.run_copy("help", "ROS_DISTRO=jazzy")
+        self.assertStatus(run, 0)
+        last = run.out_lines[-1]
+        self.assertIn("jazzy", last, run.report())
+        self.assertIn("ros2-tutorials-jazzy", last, run.report())
+
+    def test_reset_names_the_project_it_would_remove(self):
+        run = self.run_copy("reset", "ROS_DISTRO=jazzy")
+        self.assertStatus(run, 1)
+        self.assertHas(run, "ros2-tutorials-jazzy_ros-workspace")
+        self.assertHas(run, "ros2-tutorials-jazzy_ros-home")
+        for argv in self.sandbox.argv("docker"):
+            self.assertNotIn("-v", argv, run.report())
 
 if __name__ == "__main__":
     unittest.main()

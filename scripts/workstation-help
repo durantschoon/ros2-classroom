@@ -74,6 +74,8 @@ def groups(url: str) -> Tuple[Group, ...]:
         Group("Start here -- once per machine", (
             Row("make doctor", "Check this machine can build and run the workstation", None),
             Row("make image", "Build the image (slow the first time, cached after)", None),
+            Row("make distros",
+                "List the ROS 2 distributions; pick one with ROS_DISTRO=name", None),
         )),
         Group("Every session", (
             Row("make up", "Start the desktop", None),
@@ -103,7 +105,7 @@ def groups(url: str) -> Tuple[Group, ...]:
             Row("make check", "Fast tests for the host scripts (seconds, no containers)", None),
             Row("make lint",
                 "Validate compose.yaml and lint every script (shellcheck, Python 3.9)", None),
-            Row("make digest", "Print the base-image digest to pin", None),
+            Row("make digest", "Refresh every distribution's base-image digest", None),
             Row("make reset", "Delete containers AND volumes -- destructive, asks first", None),
             Row("make uninstall",
                 "Remove it all, images too, to free the disk -- asks first", None),

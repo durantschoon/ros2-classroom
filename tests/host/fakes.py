@@ -40,12 +40,14 @@ ARG_SEP = "\x00"
 # itself: the scripts must find the image compose actually builds and pulls,
 # so a rename there fails these tests until the scripts follow.
 _COMPOSE_IMAGE = re.search(
-    r"^\s*image: \$\{IMAGE_NAME:-([^}]+)\}:(\S+)\s*$",
+    r"^\s*image: \$\{IMAGE_NAME:-([^}]+)\}:\$\{IMAGE_TAG:-([^}]+)\}\s*$",
     (REPO / "compose.yaml").read_text(),
     re.MULTILINE,
 )
 if _COMPOSE_IMAGE is None:
-    raise RuntimeError("compose.yaml no longer names its image as ${IMAGE_NAME:-name}:tag")
+    raise RuntimeError(
+        "compose.yaml no longer names its image as ${IMAGE_NAME:-name}:${IMAGE_TAG:-tag}"
+    )
 COMPOSE_IMAGE_NAME = _COMPOSE_IMAGE.group(1)
 COMPOSE_IMAGE_TAG = _COMPOSE_IMAGE.group(2)
 COMPOSE_IMAGE = "{}:{}".format(COMPOSE_IMAGE_NAME, COMPOSE_IMAGE_TAG)

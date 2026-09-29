@@ -129,7 +129,8 @@ PowerShell-style parameters work too (`-Pkg my_robot -Node talker`).
 | `make test [PKG=name]` | Run your packages' tests and report the real verdict |
 | `make check` | Fast tests for the host scripts (seconds, no containers) |
 | `make lint` | Validate compose.yaml and lint every script (shellcheck, Python 3.9) |
-| `make digest` | Print the base-image digest to pin in `.env` |
+| `make distros` | List the ROS 2 distributions; pick one with `ROS_DISTRO=name` |
+| `make digest` | Refresh every distribution's base-image digest in `distros.json` |
 | `make engine` | Show which container engine was detected |
 | `make doctor` | Check host prerequisites and how to fix them |
 
@@ -156,9 +157,12 @@ Copy `.env.example` to `.env` to change the ROS distribution, published port,
 screen size, `ROS_DOMAIN_ID`, VNC password, or the extra packages baked into the
 image. Every value has a working default, so `.env` is optional.
 
-Changing `ROS_DISTRO` also requires the matching base digest
-(`make digest ROS_DISTRO=<name>`), and only distributions covered by CI are
-supported.
+`ROS_DISTRO` picks one of four ROS 2 distributions: humble, jazzy, kilted, or
+lyrical, the default (`make distros` lists them). Set it in `.env` or per
+command, e.g. `make up ROS_DISTRO=jazzy`; make and `ros2.ps1` pair it with the
+matching base-image digest from `distros.json`. Each distribution gets its own
+`/workspace`, so switching keeps the others' work. Only the default is
+published prebuilt; a non-default one is built locally the first time.
 
 ## Documentation
 

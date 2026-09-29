@@ -65,6 +65,74 @@ if ($BareWords.Count -gt 0) {
     exit 2
 }
 
+# --- the ROS distribution ------------------------------------------------------
+# The same resolution as the Makefile's scripts/distros, written out here
+# because Windows may have no Python.  ROS_DISTRO comes from the environment
+# (a ROS_DISTRO=name argument has just been put there), else .env, else the
+# default in distros.json.  It resolves to the base digest, the image tag and
+# a compose project of its own, hence its own /workspace.  The default's tag
+# and project are `latest` and `ros2-tutorials`, what students already have.
+# Explicit ROS_BASE_DIGEST, IMAGE_TAG and COMPOSE_PROJECT_NAME are kept.
+
+$DistrosPath = Join-Path $scriptDir "distros.json"
+$DotEnvPath = Join-Path $scriptDir ".env"
+
+function Read-DotEnv([string]$Path) {
+    <# NAME=value pairs as compose reads .env: blank lines and comments skipped,
+       one pair of matching quotes stripped, a later line winning. #>
+    $values = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $values }
+    foreach ($raw in @(Get-Content -LiteralPath $Path)) {
+        $line = "$raw".Trim()
+        # [string] because .NET Framework, under 5.1, has no Contains(char).
+        if (-not $line -or $line.StartsWith("#") -or -not $line.Contains([string]"=")) { continue }
+        # -split, because .NET Framework has no String.Split(string, int).
+        $parts = $line -split '=', 2
+        $value = $parts[1].Trim()
+        if ($value.Length -ge 2 -and $value[0] -eq $value[$value.Length - 1] -and ('"', "'") -contains [string]$value[0]) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $values[$parts[0].Trim()] = $value
+    }
+    return $values
+}
+
+try {
+    $DistroTable = Get-Content -Raw -LiteralPath $DistrosPath | ConvertFrom-Json
+} catch {
+    Write-Host "${DistrosPath}: cannot read it ($($_.Exception.Message))" -ForegroundColor Red
+    exit 1
+}
+$DistroNames = @()
+if ($DistroTable -and $DistroTable.distros) {
+    $DistroNames = @($DistroTable.distros.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
+}
+$DefaultDistro = if ($DistroTable) { "$($DistroTable.default)" } else { "" }
+if ($DistroNames.Count -eq 0 -or $DistroNames -cnotcontains $DefaultDistro) {
+    Write-Host "${DistrosPath}: no ""distros"", or the default is not among them" -ForegroundColor Red
+    exit 1
+}
+
+$DotEnv = Read-DotEnv $DotEnvPath
+$RosDistro = if ($env:ROS_DISTRO) { $env:ROS_DISTRO } elseif ($DotEnv["ROS_DISTRO"]) { $DotEnv["ROS_DISTRO"] } else { $DefaultDistro }
+if ($DistroNames -cnotcontains $RosDistro) {
+    Write-Host "ROS_DISTRO=$RosDistro is not supported. Choose one of: $($DistroNames -join ' ')" -ForegroundColor Red
+    exit 2
+}
+
+function Get-DistroTag([string]$Name) {
+    if ($Name -ceq $DefaultDistro) { return "latest" } else { return $Name }
+}
+
+function Get-DistroProject([string]$Name) {
+    if ($Name -ceq $DefaultDistro) { return "ros2-tutorials" } else { return "ros2-tutorials-$Name" }
+}
+
+$env:ROS_DISTRO = $RosDistro
+if (-not $env:ROS_BASE_DIGEST) { $env:ROS_BASE_DIGEST = $DistroTable.distros.$RosDistro.digest }
+if (-not $env:IMAGE_TAG) { $env:IMAGE_TAG = Get-DistroTag $RosDistro }
+if (-not $env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME = Get-DistroProject $RosDistro }
+
 $NovncPort = if ($env:NOVNC_PORT) { $env:NOVNC_PORT } else { 6080 }
 $Url = "http://127.0.0.1:$NovncPort"
 $DesktopUrl = "$Url/vnc.html?autoconnect=1&resize=remote&reconnect=true"
@@ -302,9 +370,9 @@ function Run-Down {
 # Destructive: prints exactly what will be removed and requires confirmation.
 function Run-Reset {
     Check-Docker
-    Write-Host "This removes the ros2-tutorials containers and these volumes:"
-    Write-Host "  ros2-tutorials_ros-workspace   (src/, build/, install/, log/)"
-    Write-Host "  ros2-tutorials_ros-home        (shell history, rosdep cache, settings)"
+    Write-Host "This removes the $env:COMPOSE_PROJECT_NAME containers ($env:ROS_DISTRO) and these volumes:"
+    Write-Host "  $($env:COMPOSE_PROJECT_NAME)_ros-workspace   (src/, build/, install/, log/)"
+    Write-Host "  $($env:COMPOSE_PROJECT_NAME)_ros-home        (shell history, rosdep cache, settings)"
     if (-not (Read-Confirmation "delete")) {
         Write-Host "aborted; nothing was removed"
         exit 1
@@ -460,6 +528,26 @@ function Run-Doctor {
     }
 }
 
+# The same table and hint as `make distros`.
+function Show-Distros {
+    # An ArrayList, so each row stays one array; PowerShell would flatten them.
+    $rows = New-Object System.Collections.ArrayList
+    [void]$rows.Add([string[]]@("DISTRO", "UBUNTU", "IMAGE TAG", "COMPOSE PROJECT"))
+    foreach ($name in $DistroNames) {
+        [void]$rows.Add([string[]]@($name, "$($DistroTable.distros.$name.ubuntu)", (Get-DistroTag $name), (Get-DistroProject $name)))
+    }
+    $widths = @(0, 0, 0, 0)
+    foreach ($row in $rows) {
+        foreach ($i in 0..3) { if ($row[$i].Length -gt $widths[$i]) { $widths[$i] = $row[$i].Length } }
+    }
+    foreach ($row in $rows) {
+        $cells = (@(foreach ($i in 0..3) { $row[$i].PadRight($widths[$i]) })) -join "  "
+        if ($row[0] -ceq $DefaultDistro) { Write-Host "$cells  (default)" } else { Write-Host $cells.TrimEnd() }
+    }
+    Write-Host ""
+    Write-Host "Choose one with ROS_DISTRO=<name>, e.g.  .\ros2.ps1 up ROS_DISTRO=jazzy"
+}
+
 # The old name, kept only to point at the new one.
 function Run-Teleop {
     Write-Host "'.\ros2.ps1 teleop' is now '.\ros2.ps1 turtlesim-teleop' -- it only drives turtlesim."
@@ -490,6 +578,7 @@ function Show-Help {
         @{ Usage = "uninstall";                                About = "Delete all of that and the images (asks first)";            Native = "docker rm / volume rm / network rm / image rm" }
         @{ Usage = "doctor";                                   About = "Check this machine can run the workstation";                Native = "docker info; docker compose version" }
         @{ Usage = "image";                                    About = "Build the image locally instead of pulling it";             Native = "docker compose build" }
+        @{ Usage = "distros";                                  About = "List the ROS 2 distributions; pick one with ROS_DISTRO=name"; Native = "" }
         @{ Usage = "engine";                                   About = "Show which compose command is used";                        Native = "docker compose version" }
         @{ Usage = "help";                                     About = "Show this help";                                            Native = "" }
         @{ Usage = "COMMAND help | COMMAND examples";          About = "More on shell, package, build, run, test";                  Native = "" }
@@ -511,6 +600,7 @@ function Show-Help {
     Write-Host "  .\ros2.ps1 run PKG=my_robot NODE=talker"
     Write-Host ""
     Write-Host "Desktop: $Url"
+    Write-Host "Distribution: $env:ROS_DISTRO (compose project $env:COMPOSE_PROJECT_NAME); others: .\ros2.ps1 distros"
 }
 
 # `COMMAND help`, `COMMAND examples` and `examples` print the same text as
@@ -564,6 +654,7 @@ $Dispatch = [ordered]@{
     "uninstall"        = { Run-Uninstall }
     "doctor"           = { Run-Doctor }
     "engine"           = { Run-Engine }
+    "distros"          = { Show-Distros }
     "help"             = { Show-Help }
     "examples"         = { Show-TopicHelp @("examples") }
 }

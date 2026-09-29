@@ -18,7 +18,22 @@ COMPOSE ?= $(wordlist 2,99,$(DETECTED))
 QUIET := ./scripts/run-quiet
 
 SERVICE ?= desktop
-ROS_DISTRO ?= lyrical
+
+# The ROS distribution: ROS_DISTRO=<name> on the command line, in the
+# environment, or in .env, else the default in distros.json (`make distros`
+# lists them).  scripts/distros resolves the name into the base-image digest,
+# the image tag, and a compose project of its own, hence its own /workspace;
+# all four are exported so every compose command sees them.  make does not pass
+# command-line variables to $(shell), so the four the resolver reads are handed
+# over explicitly.  An unsupported name stops every target with the resolver's
+# own message.
+DISTRO_INPUTS = ROS_DISTRO='$(ROS_DISTRO)' ROS_BASE_DIGEST='$(ROS_BASE_DIGEST)' \
+	IMAGE_TAG='$(IMAGE_TAG)' COMPOSE_PROJECT_NAME='$(COMPOSE_PROJECT_NAME)'
+DISTRO_ENV := $(shell $(DISTRO_INPUTS) ./scripts/distros env --make 2>/dev/null)
+ifeq ($(DISTRO_ENV),)
+$(error $(shell $(DISTRO_INPUTS) ./scripts/distros env --make 2>&1 >/dev/null))
+endif
+$(foreach setting,$(DISTRO_ENV),$(eval export $(setting)))
 NOVNC_PORT ?= 6080
 URL := http://localhost:$(NOVNC_PORT)
 # reconnect=true: noVNC drops the connection after laptop sleep or a network
@@ -60,7 +75,7 @@ else
 
 .PHONY: help examples engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
-	package build run test logs ps down reset uninstall selftest check lint digest
+	package build run test logs ps down reset uninstall selftest check lint digest distros
 
 # All help text lives in scripts/workstation-help, which prints targets that
 # have their own `help` and `examples` in bold on a terminal, or marked with
@@ -74,6 +89,11 @@ examples:
 
 engine:
 	@./scripts/compose-command --explain
+
+distros:
+	@./scripts/distros list
+	@echo
+	@echo 'Choose one with ROS_DISTRO=<name>, e.g.  make up ROS_DISTRO=jazzy'
 
 doctor:
 	@./scripts/check-host
@@ -233,9 +253,9 @@ down: require-engine
 
 # Destructive: prints exactly what will be removed and requires confirmation.
 reset: require-engine
-	@echo 'This removes the ros2-tutorials containers and these volumes:'
-	@echo '  ros2-tutorials_ros-workspace   (src/, build/, install/, log/)'
-	@echo '  ros2-tutorials_ros-home        (shell history, rosdep cache, settings)'
+	@echo 'This removes the $(COMPOSE_PROJECT_NAME) containers ($(ROS_DISTRO)) and these volumes:'
+	@echo '  $(COMPOSE_PROJECT_NAME)_ros-workspace   (src/, build/, install/, log/)'
+	@echo '  $(COMPOSE_PROJECT_NAME)_ros-home        (shell history, rosdep cache, settings)'
 	@if [ "$(YES)" = "1" ]; then \
 	    $(QUIET) $(COMPOSE) down -v --remove-orphans; \
 	else \
@@ -266,14 +286,10 @@ lint: require-engine
 	$(COMPOSE) config --quiet && echo 'compose config: ok'
 	./scripts/lint-scripts
 
-# Prints the multi-arch index digest for the configured distribution, for
-# pasting into .env / compose.yaml as ROS_BASE_DIGEST.
+# Fetches the current multi-arch index digest of ros:<distro>-ros-base for
+# every distribution in distros.json, says which changed, and rewrites the
+# table only if one did.  Rebuild a changed distribution afterwards.
 digest:
-	@if [ "$(ENGINE)" = 'docker' ] && docker buildx version >/dev/null 2>&1; then \
-	    docker buildx imagetools inspect docker.io/library/ros:$(ROS_DISTRO)-ros-base \
-	        | awk '/^Digest:/ {print $$2; found=1} END {if (!found) exit 1}'; \
-	else \
-	    ./scripts/base-image-digest $(ROS_DISTRO); \
-	fi
+	./scripts/distros refresh
 
 endif  # topic-help mode, opened near the top of this file
