@@ -80,6 +80,7 @@ Then, in the browser desktop:
 To run commands from PowerShell, use `.\ros2.ps1`:
 
 ```powershell
+.\ros2.ps1 help          # every command, and the docker command it runs
 .\ros2.ps1 package -Pkg my_robot -Template pubsub
 .\ros2.ps1 build -Pkg my_robot
 .\ros2.ps1 run -Pkg my_robot -Node talker

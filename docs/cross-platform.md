@@ -79,6 +79,7 @@ Run the repository natively from Windows using the provided scripts. You do not 
 | Drive turtlesim | `.\ros2.ps1 turtlesim-teleop` |
 | Build your code | `.\ros2.ps1 build -Pkg my_robot` |
 | Stop containers | `.\ros2.ps1 down` |
+| List every command | `.\ros2.ps1 help` |
 
 If you happen to clone into a Windows path and prefer to run from a WSL 2 shell anyway, the `make` targets will still detect your environment and work. However, keeping the repository inside the WSL filesystem (`~/...`, not `/mnt/c/...`) is highly recommended if you choose the WSL route, as build context reads across the 9p mount are noticeably slow.
 

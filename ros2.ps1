@@ -137,6 +137,42 @@ function Run-Down {
     docker compose down
 }
 
+# Each entry pairs a command with the native command it stands in for, so the
+# help teaches what actually runs rather than hiding it.
+function Show-Help {
+    $exec = "docker compose exec -u ros desktop"
+    $commands = @(
+        @{ Usage = "desktop";                                  About = "Start the desktop and open it in the browser (the default)"; Native = "docker compose up -d, then open $Url" }
+        @{ Usage = "up";                                       About = "Start the desktop";                                         Native = "docker compose pull; docker compose up -d" }
+        @{ Usage = "open";                                     About = "Open the desktop in the browser";                           Native = "Start-Process $DesktopUrl" }
+        @{ Usage = "shell";                                    About = "Open a ROS shell in this terminal";                         Native = "docker compose run --rm shell" }
+        @{ Usage = "turtlesim";                                About = "Start turtlesim on the browser desktop";                    Native = "$exec ros2 run turtlesim turtlesim_node" }
+        @{ Usage = "turtlesim-teleop";                         About = "Open the arrow-key controller on the desktop";              Native = "$exec turtlesim-teleop" }
+        @{ Usage = "package -Pkg NAME [-Template pubsub]";     About = "Create a package in /workspace/src";                        Native = "$exec pkg new NAME [--template pubsub]" }
+        @{ Usage = "build [-Pkg NAME]";                        About = "Build one package, or all of them";                         Native = "$exec pkg build [NAME]" }
+        @{ Usage = "run -Pkg NAME -Node EXECUTABLE";           About = "Run a node from your package";                              Native = "$exec pkg run NAME EXECUTABLE" }
+        @{ Usage = "test [-Pkg NAME]";                         About = "Test one package, or all of them";                          Native = "$exec pkg test [NAME]" }
+        @{ Usage = "down";                                     About = "Stop the containers (your work is kept)";                   Native = "docker compose down" }
+        @{ Usage = "help";                                     About = "Show this help";                                            Native = "" }
+    )
+
+    Write-Host "Usage: .\ros2.ps1 COMMAND [options]    (or .\ros2.bat COMMAND [options])" -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($entry in $commands) {
+        Write-Host ("  {0,-40} {1}" -f $entry.Usage, $entry.About)
+        if ($entry.Native) {
+            Write-Host ("  {0,-40} runs: {1}" -f "", $entry.Native) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ""
+    Write-Host "Example:" -ForegroundColor Cyan
+    Write-Host "  .\ros2.ps1 package -Pkg my_robot -Template pubsub"
+    Write-Host "  .\ros2.ps1 build -Pkg my_robot"
+    Write-Host "  .\ros2.ps1 run -Pkg my_robot -Node talker"
+    Write-Host ""
+    Write-Host "Desktop: $Url"
+}
+
 switch ($Command) {
     "desktop" { Run-Up; Run-Open }
     "up" { Run-Up }
@@ -149,8 +185,11 @@ switch ($Command) {
     "test" { Run-Test }
     "run" { Run-RunNode }
     "down" { Run-Down }
+    "help" { Show-Help }
     default {
         Write-Host "Unknown command: $Command" -ForegroundColor Red
-        Write-Host "Valid commands: desktop, up, open, shell, turtlesim, turtlesim-teleop, package, build, run, test, down"
+        Write-Host ""
+        Show-Help
+        exit 1
     }
 }
