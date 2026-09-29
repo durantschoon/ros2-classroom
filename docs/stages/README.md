@@ -54,7 +54,7 @@ export PATH="$HOME/.local/bin:$PATH"
 | Gate | Command | Notes |
 |---|---|---|
 | Static | `make lint` | Validates `compose.yaml`, and lints every script by its shebang (Python 3.9 grammar for host scripts) |
-| Fast tests | `make check` | Black-box tests against fakes; no engine needed. 209 tests, about 53 s, at `a072bec`. The 15 tests of `ros2.ps1` skip without PowerShell 7; `PWSH=/path/to/pwsh make check` runs them (about 79 s). CI's runners have `pwsh` |
+| Fast tests | `make check` | Black-box tests against fakes; no engine needed. 251 tests, about 90 s, at `3e8974d` (209 and 53 s at `a072bec`). The 15 tests of `ros2.ps1` skip without PowerShell 7; `PWSH=/path/to/pwsh make check` runs them (about 79 s). CI's runners have `pwsh` |
 | Full suite (end to end) | `make selftest` | Builds the image and exercises every documented workflow, about 10 minutes. 48/48 at `a24571d` |
 
 `make selftest` runs as its own compose project so it can never touch real
@@ -134,9 +134,9 @@ the pipeline, recorded so it does not happen again:
   only to `docs/stages/`; anything that changes what a script, the image, or
   CI does is a stage prompt on an integration branch.
 - **Check CI before authoring a stage and before merging one.**
-  `gh run list --branch <branch> --limit 3`. `main` was red for six pushes
-  (the image was renamed in `compose.yaml` and nothing else followed) and
-  nobody looked.
+  `gh run list --branch <branch> --limit 3`. `main` was red for seven pushes,
+  four before the session and three of its own (the image was renamed in
+  `compose.yaml` and nothing else followed), and nobody looked.
 - **A prototype is evidence, not a base.** A prompt may cite a spike branch for
   design and measurements; the executor still implements from the prompt, with
   tests, and no stage merges the spike.
@@ -253,9 +253,15 @@ unchanged Dockerfile are recorded in stage 11's prompt.
 
 | Stage | Kind | Scope | State |
 |---|---|---|---|
-| 11 | Feature | `distros.json`, `scripts/distros`, Makefile and compose wiring, `make distros`, `make digest` refreshes the table; the same resolution in `ros2.ps1` (the parity test requires it); CI runs on this branch | authored |
-| 12 | Feature | `compose-up`, `uninstall` (both `scripts/uninstall` and `ros2.ps1 uninstall`) and `smoke-container` know about every distribution | planned |
-| 13 | Feature | Per-distribution Dockerfile fixes if needed; CI builds and smoke-tests all four; docs | planned |
+| 11 | Feature | `distros.json`, `scripts/distros`, Makefile and compose wiring, `make distros`, `make digest` refreshes the table; the same resolution in `ros2.ps1` (the parity test requires it); CI runs on this branch | merged as `3e8974d` (reviewer: mechanically clean; coordinator reran lint, check with pwsh, and selftest 48/48) |
+| 12 | Feature | `compose-up`, `uninstall` (both `scripts/uninstall` and `ros2.ps1 uninstall`) and `smoke-container` know about every distribution; the shell prompt names the distribution, `(jazzy) ros@…:/workspace$`, for the default too (`docker/bashrc.d/ros-workspace.sh`); a noVNC port per distribution, so several run at once: each table entry becomes (Ubuntu, port, digest), lyrical 6080 (the default keeps today's port), humble 6082, jazzy 6083, kilted 6084, 6081 left to the self-test; the resolver exports `NOVNC_PORT` (an explicit one wins) and refuses a table with a shared port or 6081; `distros` lists the port (user's decision, 2026-09-29) | planned |
+| 13 | Feature | Per-distribution Dockerfile fixes if needed (none so far: humble, jazzy and kilted trial builds all exited 0 from the unchanged Dockerfile on 2026-09-29); CI smoke-tests the default on every push and all four nightly and on manual dispatch; CI publishes `:latest`, `:lyrical`, `:humble`, `:jazzy`, `:kilted` to ghcr on pushes to `main` (amd64 and arm64; needs `packages: write`); docs | planned |
+
+User decisions, 2026-09-29: CI publishes all four tags on `main`; the default
+is smoke-tested on every push, all four nightly; the branch reaches `main` by a
+pull request the coordinator opens and the user merges; after multi-distro the
+quiz comes first, which first needs the user's decision on `native-commands`
+(it still carries pre-v1.0 history).
 
 These share `Makefile`, `compose.yaml` and the workflow, so they run one at a
 time.
@@ -272,11 +278,26 @@ Recorded as they arrived; each needs a prompt before anything is built.
   then a hint ladder (which part, then the shape, then the answer). The answer
   key is the exact command `pkg` prints, tied by a test so the quiz cannot
   teach something else. `pkg quiz`, run in the desktop's terminal.
+- **Quiz on general knowledge, not only commands**: where to run
+  `colcon build` yourself (the workspace root, `/workspace`, never `src/` or a
+  package directory, which scatters `build/ install/ log/` in the wrong
+  place); which shells must `source install/setup.bash`, and why a shell that
+  was already open does not see a new package; what `--symlink-install`
+  changes.
 - **Rename a node from the desktop menu**: a right-click entry opens a dialog
   for the new name, runs the node, and prints the real command, e.g.
   `ros2 run turtlesim turtlesim_node --ros-args -r __node:=my_turtle` (ROS 2
   needs `--ros-args -r`; a bare `__node:=` is ROS 1). A quiz item later.
   Needs a dialog tool in the image (zenity or similar: a Dockerfile change).
+- **Colour for `ros2 node info`.** Nothing released does it: ros2cli PR
+  #1248 (colour helpers, `node info` first) was open and Rolling-only on
+  2026-09-29; ros2tree and the TUIs (rtui, rosgraph_tui) are different
+  commands, which would teach students a command a plain install lacks. So a
+  filter, keeping the native command in their hands:
+  `ros2 node info /turtlesim | ros2-color`, colouring section headers, names
+  and types; plain when not a terminal or when `NO_COLOR` is set; unknown
+  lines passed through untouched. Tested against all four distributions'
+  output, so after multi-distro. Drop it where #1248 ships.
 - **Rebuild only what changed**: colcon + CMake already rebuild changed files
   within a package, and `--symlink-install` Python needs none; the gain is
   skipping unchanged packages. `pkg build --changed`: compare sources against
@@ -291,6 +312,28 @@ Recorded as they arrived; each needs a prompt before anything is built.
   `ament_target_dependencies` for `target_link_libraries(… pkg::target)`, so
   this follows multi-distro. Needs `python3-jinja2` in the image. The native
   form to teach alongside: `ros2 pkg create --dependencies`.
+
+## Backlog from the reports' Open questions (multi-distro)
+
+From stage 11, for stage 12 unless noted:
+
+- `scripts/distros -h`/`--help` was added beyond the prompt and has no test.
+- `ros2.ps1` validates the table more coarsely than `scripts/distros` (no
+  digest shape); a shared fixture of malformed tables run through both would
+  pin them together.
+- An unsupported `ROS_DISTRO` in `.env` stops every target, `make distros`
+  and `make help` included, so the way to recover is to edit `.env` first.
+- Plain `docker compose` with `ROS_DISTRO=jazzy` in `.env` and no `eval`
+  still pairs jazzy with the default's digest and tag: documented in
+  `.env.example`, not prevented.
+- A student's old `.env` pinning `ROS_BASE_DIGEST` is now overridden by the
+  table (make and `ros2.ps1` export it). Identical today; after a refresh the
+  table wins. Probably right; say so in stage 13's docs.
+- Inline comments in `.env` (`ROS_DISTRO=jazzy  # mine`) are not stripped;
+  the result is a loud "not supported", never a silent wrong choice.
+- `make check` grew to about 90 s (each `make` parse starts one more
+  `python3`, and the self-test's tests parse the Makefile many times).
+- make 3.81 (macOS) untested; the resolver uses only functions 3.81 has.
 
 ## Plan for roadmap Stage 2, "What you would have run"
 
