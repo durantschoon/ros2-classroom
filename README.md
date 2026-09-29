@@ -77,7 +77,15 @@ Then, in the browser desktop:
   arrow keys.
 
 **On Windows:** Download and start [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) first (make sure Docker Desktop is open and running). Once Docker is running, double-click `ros2.bat` to launch the desktop and open the browser automatically. 
-To run commands from PowerShell, use `.\ros2.ps1`:
+To run commands from PowerShell, use `.\ros2.ps1`. If PowerShell says
+"running scripts is disabled on this system", allow local scripts once for
+your user (`.\ros2.bat` works either way):
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then:
 
 ```powershell
 .\ros2.ps1 help          # every command, and the docker command it runs

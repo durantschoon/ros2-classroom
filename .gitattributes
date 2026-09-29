@@ -1,0 +1,8 @@
+# Keep LF everywhere: the scripts under docker/ run inside a Linux container,
+# and Git for Windows (core.autocrlf=true) would otherwise check them out
+# with CRLF, breaking shebangs when the image is built locally.
+* text=auto eol=lf
+
+# Windows-only launchers: cmd.exe misparses labels in LF batch files.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
