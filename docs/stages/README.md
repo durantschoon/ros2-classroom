@@ -15,7 +15,8 @@ and verified end to end, and that promotion is the user's call.
 |---|---|---|---|
 | `python-port` | Shell scripts to Python | 01-06 | merged to `main` (`a24571d` before the v1.0 rewrite, `6533659` after), branch deleted |
 | `native-commands` | Roadmap Stage 2, "What you would have run" | 07-10 | in progress; still on the pre-v1.0 history (see below) |
-| `multi-distro` | Four ROS 2 distributions from one table | 11- | in progress |
+| `multi-distro` | Four ROS 2 distributions from one table | 11-13 | in progress |
+| `pkg-helpers` | Student helpers inside the container (`pkg build --changed` first) | 14- | in progress; branched from `multi-distro` at stage 12, promoted after it |
 
 **v1.0 and the redaction.** At the v1.0 release `main` was rewritten without
 `docs/stages/`, and its commits got new hashes. The records of stages 01-07
@@ -137,6 +138,13 @@ the pipeline, recorded so it does not happen again:
   `gh run list --branch <branch> --limit 3`. `main` was red for seven pushes,
   four before the session and three of its own (the image was renamed in
   `compose.yaml` and nothing else followed), and nobody looked.
+- **Every self-test, by anyone, sets `IMAGE_NAME`.** Plain `make selftest`
+  rebuilds `ghcr.io/durantschoon/ros2-classroom:latest`, the tag the user's
+  running desktop was created from, so their next `make up` recreates it from
+  a branch build. It happened in stage 11 (the executor's runs and the
+  coordinator's review run, 2026-09-29) and stage 12's executor caught it
+  (Open question 4). Always `IMAGE_NAME=ros2-tutorials-stNN make selftest`,
+  and remove that image afterwards.
 - **A prototype is evidence, not a base.** A prompt may cite a spike branch for
   design and measurements; the executor still implements from the prompt, with
   tests, and no stage merges the spike.
@@ -254,14 +262,16 @@ unchanged Dockerfile are recorded in stage 11's prompt.
 | Stage | Kind | Scope | State |
 |---|---|---|---|
 | 11 | Feature | `distros.json`, `scripts/distros`, Makefile and compose wiring, `make distros`, `make digest` refreshes the table; the same resolution in `ros2.ps1` (the parity test requires it); CI runs on this branch | merged as `3e8974d` (reviewer: mechanically clean; coordinator reran lint, check with pwsh, and selftest 48/48) |
-| 12 | Feature | `compose-up`, `uninstall` (both `scripts/uninstall` and `ros2.ps1 uninstall`) and `smoke-container` know about every distribution; the shell prompt names the distribution, `(jazzy) ros@…:/workspace$`, for the default too (`docker/bashrc.d/ros-workspace.sh`); a noVNC port per distribution, so several run at once: each table entry becomes (Ubuntu, port, digest), lyrical 6080 (the default keeps today's port), humble 6082, jazzy 6083, kilted 6084, 6081 left to the self-test; the resolver exports `NOVNC_PORT` (an explicit one wins) and refuses a table with a shared port or 6081; `distros` lists the port (user's decision, 2026-09-29) | authored |
-| 13 | Feature | Per-distribution Dockerfile fixes if needed (none so far: humble, jazzy and kilted trial builds all exited 0 from the unchanged Dockerfile on 2026-09-29); CI smoke-tests the default on every push and all four nightly and on manual dispatch; CI publishes `:latest`, `:lyrical`, `:humble`, `:jazzy`, `:kilted` to ghcr on pushes to `main` (amd64 and arm64; needs `packages: write`); docs | planned |
+| 12 | Feature | `compose-up`, `uninstall` (both `scripts/uninstall` and `ros2.ps1 uninstall`) and `smoke-container` know about every distribution; the shell prompt names the distribution, `(jazzy) ros@…:/workspace$`, for the default too (`docker/bashrc.d/ros-workspace.sh`); a noVNC port per distribution, so several run at once: each table entry becomes (Ubuntu, port, digest), lyrical 6080 (the default keeps today's port), humble 6082, jazzy 6083, kilted 6084, 6081 left to the self-test; the resolver exports `NOVNC_PORT` (an explicit one wins) and refuses a table with a shared port or 6081; `distros` lists the port (user's decision, 2026-09-29) | merged as `a38ba0d` + report fix `8d57310` (reviewer: one defect, the report's missing messages section, fixed; coordinator reran lint, check with pwsh, isolated selftest 48/48). Jazzy self-test 47/48 (cross-service DDS) handed to stage 13 |
+| 13 | Feature | Per-distribution Dockerfile fixes if needed (none so far: humble, jazzy and kilted trial builds all exited 0 from the unchanged Dockerfile on 2026-09-29); CI smoke-tests the default on every push and all four nightly and on manual dispatch; CI publishes `:latest`, `:lyrical`, `:humble`, `:jazzy`, `:kilted` to ghcr on pushes to `main` (amd64 and arm64; needs `packages: write`); docs | authored |
 
 User decisions, 2026-09-29: CI publishes all four tags on `main`; the default
 is smoke-tested on every push, all four nightly; the branch reaches `main` by a
 pull request the coordinator opens and the user merges; after multi-distro the
 quiz comes first, which first needs the user's decision on `native-commands`
 (it still carries pre-v1.0 history).
+After stage 13 merges, the coordinator deletes the user's reference branch
+`publish-for-stage13` from origin (the user's instruction, 2026-09-29).
 
 These share `Makefile`, `compose.yaml` and the workflow, so they run one at a
 time.
