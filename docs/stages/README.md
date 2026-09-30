@@ -323,6 +323,20 @@ Recorded as they arrived; each needs a prompt before anything is built.
   this follows multi-distro. Needs `python3-jinja2` in the image. The native
   form to teach alongside: `ros2 pkg create --dependencies`.
 
+## Plan for pkg-helpers (integration branch `pkg-helpers`)
+
+Helpers a student runs inside the container, each printing the native
+commands it stands in for. Branched from `multi-distro` (stage 12 merged,
+`7700c8e`) so it carries this README and the distribution work; promoted to
+`main` after `multi-distro`.
+
+| Stage | Kind | Scope | State |
+|---|---|---|---|
+| 14 | Feature | `pkg build --changed`: rebuild the packages whose sources changed since their last build, and what depends on them (`colcon build --packages-above`) | authored |
+
+Runs alongside stage 13 on disjoint files, with its own self-test project,
+port and image.
+
 ## Backlog from the reports' Open questions (multi-distro)
 
 From stage 11, for stage 12 unless noted:
