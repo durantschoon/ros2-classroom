@@ -450,6 +450,10 @@ image.
 9. Several shell commands were refused by this session's worktree guard, so
    edits and drivers ran as Python scripts from the scratchpad. The results
    are the same.
+10. **`ros2.ps1 uninstall`'s default image name changed** from `ros2-tutorials`
+    to `ghcr.io/durantschoon/ros2-classroom`, the name `compose.yaml` uses. This
+    fixes a mismatch that existed before this stage; I did not disclose it in
+    the first commit.
 
 ## 8. Open questions
 
@@ -490,3 +494,219 @@ image.
    user.
 7. `make check` is now about 92 s without pwsh and 150 s with it. The shared
    malformed-table test alone starts pwsh 13 times.
+
+## 9. Every message `scripts/distros` can print
+
+Added in a second commit, after review. The committed script (`a38ba0d`,
+`git show HEAD:scripts/distros`) and `distros.json` were copied into a scratch
+tree, shown here as `<tree>`, and run there with stdout and stderr merged.
+Nothing below was written out from the source. The inputs came from a driver
+script:
+- a sibling `base-image-digest` stub for each refresh case
+- the tree made read-only for the write failure
+- a directory in place of `.env` for the unreadable `.env`
+- one hand-edited table per malformed case
+
+Each `# ` line labels the case.
+
+```
+# env, the default
+$ <tree>/scripts/distros env
+export ROS_DISTRO=lyrical
+export ROS_BASE_DIGEST=sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806
+export IMAGE_TAG=latest
+export COMPOSE_PROJECT_NAME=ros2-tutorials
+export NOVNC_PORT=6080
+[exit 0]
+# env --make, the default
+$ <tree>/scripts/distros env --make
+ROS_DISTRO=lyrical
+ROS_BASE_DIGEST=sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806
+IMAGE_TAG=latest
+COMPOSE_PROJECT_NAME=ros2-tutorials
+NOVNC_PORT=6080
+[exit 0]
+# env, another distribution
+$ env ROS_DISTRO=jazzy <tree>/scripts/distros env
+export ROS_DISTRO=jazzy
+export ROS_BASE_DIGEST=sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8
+export IMAGE_TAG=jazzy
+export COMPOSE_PROJECT_NAME=ros2-tutorials-jazzy
+export NOVNC_PORT=6083
+[exit 0]
+# env, an explicit port wins
+$ env ROS_DISTRO=jazzy NOVNC_PORT=7000 <tree>/scripts/distros env --make
+ROS_DISTRO=jazzy
+ROS_BASE_DIGEST=sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8
+IMAGE_TAG=jazzy
+COMPOSE_PROJECT_NAME=ros2-tutorials-jazzy
+NOVNC_PORT=7000
+[exit 0]
+# list
+$ <tree>/scripts/distros list
+DISTRO   UBUNTU  PORT  IMAGE TAG  COMPOSE PROJECT
+humble   22.04   6082  humble     ros2-tutorials-humble
+jazzy    24.04   6083  jazzy      ros2-tutorials-jazzy
+kilted   24.04   6084  kilted     ros2-tutorials-kilted
+lyrical  26.04   6080  latest     ros2-tutorials         (default)
+[exit 0]
+# -h
+$ <tree>/scripts/distros -h
+usage: distros env [--make] | distros list | distros refresh
+[exit 0]
+# --help
+$ <tree>/scripts/distros --help
+usage: distros env [--make] | distros list | distros refresh
+[exit 0]
+# no subcommand
+$ <tree>/scripts/distros
+usage: distros env [--make] | distros list | distros refresh
+[exit 2]
+# an unknown subcommand
+$ <tree>/scripts/distros bogus
+usage: distros env [--make] | distros list | distros refresh
+[exit 2]
+# an unknown option
+$ <tree>/scripts/distros env --bogus
+usage: distros env [--make] | distros list | distros refresh
+[exit 2]
+# an extra word
+$ <tree>/scripts/distros list extra
+usage: distros env [--make] | distros list | distros refresh
+[exit 2]
+# an unsupported name
+$ env ROS_DISTRO=foxy <tree>/scripts/distros env
+ROS_DISTRO=foxy is not supported. Choose one of: humble jazzy kilted lyrical
+[exit 2]
+# refresh: not a digest, changed, could not fetch, unchanged
+$ <tree>/scripts/distros refresh
+humble: base-image-digest answered 'nonsense', not a sha256 digest
+humble   kept sha256:1813d3c85d7f96ff7d3012d865204583255740182db5d0065f8f8cd029a83138 (could not fetch)
+jazzy    sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8 -> sha256:abababababababababababababababababababababababababababababababab
+no digest for ros:kilted-ros-base
+kilted   kept sha256:8e7b828a8f24416dd29fde258d81ad49c87fb9becc1289cf69c9d28d36fa78f9 (could not fetch)
+lyrical  unchanged
+
+Updated <tree>/distros.json. Rebuild each changed distribution:
+  make image ROS_DISTRO=jazzy
+Some digests could not be fetched; those entries were kept.
+[exit 1]
+# refresh: nothing changed
+$ <tree>/scripts/distros refresh
+humble   unchanged
+jazzy    unchanged
+kilted   unchanged
+lyrical  unchanged
+[exit 0]
+# refresh: a change that cannot be written (tree read-only)
+$ <tree>/scripts/distros refresh
+humble   sha256:1813d3c85d7f96ff7d3012d865204583255740182db5d0065f8f8cd029a83138 -> sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+jazzy    unchanged
+kilted   unchanged
+lyrical  unchanged
+<tree>/distros.json: cannot write it ([Errno 13] Permission denied: '<tree>/.distros.n99a5jm7')
+[exit 1]
+# refresh: no base-image-digest beside it
+$ <tree>/scripts/distros refresh
+could not run <tree>/scripts/base-image-digest: [Errno 2] No such file or directory: '<tree>/scripts/base-image-digest'
+humble   kept sha256:1813d3c85d7f96ff7d3012d865204583255740182db5d0065f8f8cd029a83138 (could not fetch)
+could not run <tree>/scripts/base-image-digest: [Errno 2] No such file or directory: '<tree>/scripts/base-image-digest'
+jazzy    kept sha256:c3706ef0a0aa45413c07803cf433602f543b22e45b4855f6fca955c2d8ecc4e8 (could not fetch)
+could not run <tree>/scripts/base-image-digest: [Errno 2] No such file or directory: '<tree>/scripts/base-image-digest'
+kilted   kept sha256:8e7b828a8f24416dd29fde258d81ad49c87fb9becc1289cf69c9d28d36fa78f9 (could not fetch)
+could not run <tree>/scripts/base-image-digest: [Errno 2] No such file or directory: '<tree>/scripts/base-image-digest'
+lyrical  kept sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806 (could not fetch)
+Some digests could not be fetched; those entries were kept.
+[exit 1]
+# env: an unreadable .env
+$ <tree>/scripts/distros env
+<tree>/.env: cannot read it ([Errno 21] Is a directory: '<tree>/.env')
+[exit 1]
+# malformed: not JSON
+$ <tree>/scripts/distros env
+<tree>/distros.json: not valid JSON (Expecting property name enclosed in double quotes: line 1 column 3 (char 2))
+[exit 1]
+# malformed: not an object
+$ <tree>/scripts/distros env
+<tree>/distros.json: expected a JSON object at the top level
+[exit 1]
+# malformed: _comment not a list of strings
+$ <tree>/scripts/distros env
+<tree>/distros.json: "_comment" must be a list of strings
+[exit 1]
+# malformed: no distros
+$ <tree>/scripts/distros env
+<tree>/distros.json: missing "distros", an object of distribution names
+[exit 1]
+# malformed: a bad name
+$ <tree>/scripts/distros env
+<tree>/distros.json: 'Bad Name' is not a distribution name
+[exit 1]
+# malformed: an entry that is not an object
+$ <tree>/scripts/distros env
+<tree>/distros.json: "jazzy" must be an object with "ubuntu", "port" and "digest"
+[exit 1]
+# malformed: no ubuntu
+$ <tree>/scripts/distros env
+<tree>/distros.json: "jazzy" has no "ubuntu" version
+[exit 1]
+# malformed: no port
+$ <tree>/scripts/distros env
+<tree>/distros.json: "jazzy" has no "port", an integer from 1024 to 65535
+[exit 1]
+# malformed: a port that is a string
+$ <tree>/scripts/distros env
+<tree>/distros.json: "jazzy" has no "port", an integer from 1024 to 65535
+[exit 1]
+# malformed: a port below 1024
+$ <tree>/scripts/distros env
+<tree>/distros.json: "humble" has no "port", an integer from 1024 to 65535
+[exit 1]
+# malformed: the self-test's port
+$ <tree>/scripts/distros env
+<tree>/distros.json: "kilted" has port 6081, which make selftest keeps for itself
+[exit 1]
+# malformed: a bad digest
+$ <tree>/scripts/distros env
+<tree>/distros.json: "jazzy" has no "digest" of the form sha256:<64 hex digits>
+[exit 1]
+# malformed: a shared port
+$ <tree>/scripts/distros env
+<tree>/distros.json: "humble" and "jazzy" share port 6082
+[exit 1]
+# malformed: no default
+$ <tree>/scripts/distros env
+<tree>/distros.json: missing "default", the name of the default distribution
+[exit 1]
+# malformed: a default not in distros
+$ <tree>/scripts/distros env
+<tree>/distros.json: the default, "rolling", is not in "distros"
+[exit 1]
+# malformed: no table
+$ <tree>/scripts/distros env
+<tree>/distros.json: cannot read it ([Errno 2] No such file or directory: '<tree>/distros.json')
+[exit 1]
+```
+
+Where each message goes:
+- Usage errors and the unsupported-name error go to stderr with exit 2.
+  `-h`/`--help` prints the usage line to stdout with exit 0.
+- A table problem, an unreadable `.env`, or a failed write is one stderr line
+  of the form `<path>: <problem>`, with exit 1.
+- The refresh outcome lines go to stdout.
+- These refresh messages go to stderr:
+  - `could not run ...`
+  - `...: base-image-digest answered ...`
+  - `Some digests could not be fetched; those entries were kept.`
+- `base-image-digest`'s own errors pass through on its stderr.
+
+Compared with stage 11's list, this stage's new messages are:
+- the fifth `NOVNC_PORT` line of `env`
+- the `PORT` column of `list`
+- `"<d>" has no "port", an integer from 1024 to 65535`
+- `"<d>" has port 6081, which make selftest keeps for itself`
+- `"<a>" and "<b>" share port <p>`
+- the object-type message, which now names `"port"`
+
+This section also captures the `-h`, `--help`, `cannot write it` and
+unreadable-`.env` cases.
