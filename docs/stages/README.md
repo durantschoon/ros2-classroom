@@ -421,7 +421,7 @@ From stage 11, for stage 12 unless noted:
 
 | Stage | Kind | Scope | State |
 |---|---|---|---|
-| 07 | Feature | The first-run question, its saved answer, `make choose`, and the `EXPLAIN` override; the same in `ros2.ps1` (the parity test requires `choose` there) | re-authored 2026-10-01 on `native-recipes` |
+| 07 | Feature | The first-run question, its saved answer, `make choose`, and the `EXPLAIN` override; the same in `ros2.ps1` (the parity test requires `choose` there) | attempt 1 (`f4662ad`) blocked cleanly on the coordinator's pwsh-less baseline; attempt 2 merged as `519114a`, with `multi-distro` (stage 13) merged in as `1e352c9` (coordinator: diff read; on the union, lint 36/36, `PWSH=… make check` 341 OK, the first fully green run on macOS, isolated selftest 48/48). `test_explain_choice.py` takes 4.9-5.7 s under load against a 5 s budget: accepted |
 | 08 | Feature | The recipe data model and platform detection; the self-test pins `EXPLAIN=0`. Recipes are indexed by distribution too: `ros_distro` is a decision point, and multi-distro made it a live one | planned |
 | 09 | Feature | Linux/apt recipes, verified for real in CI; targets print them | planned |
 | 10 | Feature | macOS recipes through **pixi** and RoboStack, and WSL recipes, entering as `verified-by-hand` or `community-reported` (retro first) | planned |
@@ -440,6 +440,23 @@ carries `pixi` as a closed value, and stage 10 verifies each macOS recipe by
 hand on this host before it may be marked `verified-by-hand`. RoboStack also
 publishes `win-64`; a pixi route for Windows without WSL is an idea, not a
 plan (the roadmap's Windows-means-WSL decision stands).
+
+Backlog from stage 07's report and review (2026-10-01):
+
+- **CI never runs on `native-recipes`** or its stage branches: the workflow's
+  `push:` list names `main`, `python-port`, `multi-distro` and `docker/**`
+  only. Stage 08 adds `native-recipes` (one line, `docker-image.yml`), or a
+  draft pull request gives it CI meanwhile.
+- Ctrl-C at `ros2.ps1`'s question hangs under `pwsh` on a Unix pty (echoes
+  `^C`, keeps reading). Windows consoles normally end the script; untested.
+- `ros2.ps1 desktop` asking once is tested only up to `up`; past that, `open`
+  would start a real browser.
+- Under `pwsh` on a Unix pty the typed answer is echoed twice. Cosmetic.
+- `make choose` with `EXPLAIN` set still asks and saves. Unspecified; probably
+  right (the student asked to choose).
+- With no terminal and a corrupt saved file, every student target prints the
+  one-line notice on stderr. Chosen over byte-for-byte silence (guardrail:
+  never silently discarded).
 
 These are new features, not ports, so guardrail 8 reads differently: existing
 behaviour is preserved exactly for a student who answers 1 or is never asked.
