@@ -361,6 +361,38 @@ class DistributionTests(ScriptTestCase):
         self.assertHas(run, "  make up NOVNC_PORT=6082 && make open NOVNC_PORT=6082",
                        where="stderr")
 
+    # --- the busy-port hint names a non-default distribution ---------------
+
+    def busy_hint_for(self, distro, port):
+        self.sandbox.fake("podman", rules=engine_rules(image_id="sameid"))
+        self.sandbox.fake("compose-stub", exit_code=1)
+        run = self.run_script(COMPOSE="compose-stub", ENGINE="podman", NOVNC_PORT=port,
+                              ROS_DISTRO=distro)
+        self.assertStatus(run, 1)
+        return run
+
+    def test_the_hint_for_another_distribution_names_it(self):
+        # Without ROS_DISTRO the suggested `make up` would start the default.
+        run = self.busy_hint_for("jazzy", "6083")
+        self.assertHas(run, "something else is using host port 6083.", where="stderr")
+        self.assertHas(run, "  make up ROS_DISTRO=jazzy NOVNC_PORT=6085"
+                            " && make open ROS_DISTRO=jazzy NOVNC_PORT=6085",
+                       where="stderr")
+
+    def test_the_hint_for_the_default_is_unchanged(self):
+        run = self.busy_hint_for("lyrical", "6080")
+        self.assertHas(run, "  make up NOVNC_PORT=6085 && make open NOVNC_PORT=6085",
+                       where="stderr")
+        self.assertLacks(run, "ROS_DISTRO", where="stderr")
+
+    def test_a_name_that_is_not_paste_safe_is_never_printed(self):
+        for distro in ("jazzy; rm -rf ~", "Jazzy", "$(id)", "-jazzy"):
+            with self.subTest(distro=distro):
+                run = self.busy_hint_for(distro, "6083")
+                self.assertHas(run, "  make up NOVNC_PORT=6085 && make open NOVNC_PORT=6085",
+                               where="stderr")
+                self.assertLacks(run, "ROS_DISTRO", where="stderr")
+
 
 if __name__ == "__main__":
     unittest.main()

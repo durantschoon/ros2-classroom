@@ -302,7 +302,7 @@ unchanged Dockerfile are recorded in stage 11's prompt.
 |---|---|---|---|
 | 11 | Feature | `distros.json`, `scripts/distros`, Makefile and compose wiring, `make distros`, `make digest` refreshes the table; the same resolution in `ros2.ps1` (the parity test requires it); CI runs on this branch | merged as `3e8974d` (reviewer: mechanically clean; coordinator reran lint, check with pwsh, and selftest 48/48) |
 | 12 | Feature | `compose-up`, `uninstall` (both `scripts/uninstall` and `ros2.ps1 uninstall`) and `smoke-container` know about every distribution; the shell prompt names the distribution, `(jazzy) ros@…:/workspace$`, for the default too (`docker/bashrc.d/ros-workspace.sh`); a noVNC port per distribution, so several run at once: each table entry becomes (Ubuntu, port, digest), lyrical 6080 (the default keeps today's port), humble 6082, jazzy 6083, kilted 6084, 6081 left to the self-test; the resolver exports `NOVNC_PORT` (an explicit one wins) and refuses a table with a shared port or 6081; `distros` lists the port (user's decision, 2026-09-29) | merged as `a38ba0d` + report fix `8d57310` (reviewer: one defect, the report's missing messages section, fixed; coordinator reran lint, check with pwsh, isolated selftest 48/48). Jazzy self-test 47/48 (cross-service DDS) handed to stage 13 |
-| 13 | Feature | Per-distribution Dockerfile fixes if needed (none so far: humble, jazzy and kilted trial builds all exited 0 from the unchanged Dockerfile on 2026-09-29); CI smoke-tests the default on every push and all four nightly and on manual dispatch; CI publishes `:latest`, `:lyrical`, `:humble`, `:jazzy`, `:kilted` to ghcr on pushes to `main` (amd64 and arm64; needs `packages: write`); docs | authored |
+| 13 | Feature | Per-distribution Dockerfile fixes if needed (none so far: humble, jazzy and kilted trial builds all exited 0 from the unchanged Dockerfile on 2026-09-29); CI smoke-tests the default on every push and all four nightly and on manual dispatch; CI publishes `:latest`, `:lyrical`, `:humble`, `:jazzy`, `:kilted` to ghcr on pushes to `main` (amd64 and arm64; needs `packages: write`); docs | merged as `242573c` + report `4440646`, fast-forward (coordinator: diff read, lint and check rerun, the latter with `pwsh`, which the executor's sandbox refused: the 13 `test_ros2_ps1` symlink failures remain, stage 07 owns them; CI green on all three runs). Four local self-tests 48/48 on arm64; publish dry run green, nothing pushed; publishes only after `main`. Jazzy's DDS failure did not reproduce |
 
 User decisions, 2026-09-29: CI publishes all four tags on `main`; the default
 is smoke-tested on every push, all four nightly; the branch reaches `main` by a
@@ -366,6 +366,36 @@ Recorded as they arrived; each needs a prompt before anything is built.
   form to teach alongside: `ros2 pkg create --dependencies`.
 
 ## Backlog from the reports' Open questions (multi-distro)
+
+From stage 13 (2026-10-01):
+
+- Jazzy's stage 12 DDS failure (WSL host) did not reproduce on macOS or CI.
+  If it returns, collect the talker's log and `ros2 topic list` from the
+  desktop at the moment of failure.
+- The publish dry run builds all four distributions for both architectures
+  on every pull request (14-19 min a leg). Path filters (`Dockerfile`,
+  `docker/**`, `distros.json`, the workflows) would cut that.
+- Two pushes to `main` close together could publish `:latest` out of order:
+  `publish.yml` has no `concurrency:` group (coordinator's review).
+- First real publish may need the user to grant the repository write access
+  to the ghcr package ("Manage Actions access"). `build-push-action` adds
+  provenance attestations, shown as an `unknown/unknown` platform in ghcr;
+  `provenance: false` removes them if unwanted.
+- The nightly schedule runs only on the default branch: until `main` has it,
+  `gh workflow run docker-image.yml --ref multi-distro -f distros=all`.
+- `.env.example` says `ROS_BASE_DIGEST` overrides the table; in `.env` it
+  does so only for plain `docker compose`.
+- README "Documentation" still titles `docs/ros-distributions.md` "Why the
+  distribution choice differs from `main`".
+- README Quick start says `make image` "downloads and builds"; with published
+  images `make up` alone pulls. Stage 07 holds that section now; after it.
+- With an unreadable `distros.json`, `compose-up`'s hint would name
+  `ROS_DISTRO=lyrical`; unreachable through make.
+- Stage 13 landed as two commits (change, then report) because the CI dry run
+  needs the change pushed before the report can quote it, and force-pushing
+  is forbidden. Prompts whose verification needs a pushed branch should allow
+  that shape.
+
 
 From stage 11, for stage 12 unless noted:
 

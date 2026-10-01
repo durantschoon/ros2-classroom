@@ -149,9 +149,11 @@ PowerShell-style parameters work too (`-Pkg my_robot -Node talker`).
 
 ## What is in the image
 
-ROS 2 Lyrical Luth (`ros:lyrical-ros-base`, pinned by digest) plus turtlesim,
-`rqt`, RViz 2, rosdep, colcon, vcstool, a C++ toolchain, git, and a small
-Openbox desktop driven by Xvfb, x11vnc, and noVNC under supervisor.
+ROS 2 Lyrical Luth by default, or Humble, Jazzy or Kilted (see
+[Configuration](#configuration)), each from its official `ros:<distro>-ros-base`
+image pinned by digest, plus turtlesim, `rqt`, RViz 2, rosdep, colcon, vcstool,
+a C++ toolchain, git, and a small Openbox desktop driven by Xvfb, x11vnc, and
+noVNC under supervisor.
 
 The container runs as the non-root user `ros`, which has passwordless `sudo`:
 this is a development environment, not a security sandbox.
@@ -170,12 +172,25 @@ Copy `.env.example` to `.env` to change the ROS distribution, published port,
 screen size, `ROS_DOMAIN_ID`, VNC password, or the extra packages baked into the
 image. Every value has a working default, so `.env` is optional.
 
-`ROS_DISTRO` picks one of four ROS 2 distributions: humble, jazzy, kilted, or
-lyrical, the default (`make distros` lists them). Set it in `.env` or per
-command, e.g. `make up ROS_DISTRO=jazzy`; make and `ros2.ps1` pair it with the
-matching base-image digest from `distros.json`. Each distribution gets its own
-`/workspace`, so switching keeps the others' work. Only the default is
-published prebuilt; a non-default one is built locally the first time.
+`ROS_DISTRO` picks one of four ROS 2 distributions. `make distros` lists them
+from `distros.json`:
+
+| Distribution | Ubuntu | Desktop at | Image tag |
+|---|---|---|---|
+| lyrical (the default) | 26.04 | `http://localhost:6080` | `:latest`, `:lyrical` |
+| humble | 22.04 | `http://localhost:6082` | `:humble` |
+| jazzy | 24.04 | `http://localhost:6083` | `:jazzy` |
+| kilted | 24.04 | `http://localhost:6084` | `:kilted` |
+
+Set it per command, e.g. `make up ROS_DISTRO=jazzy` then
+`make open ROS_DISTRO=jazzy`, or once in `.env`; on Windows,
+`.\ros2.ps1 up ROS_DISTRO=jazzy`. Each distribution has its own noVNC port and
+its own `/workspace` and `/home/ros`, so several can run at once and switching
+keeps the others' work. All four are published prebuilt to
+`ghcr.io/durantschoon/ros2-classroom` for amd64 and arm64, so trying another
+distribution is a download, not a build; `make image ROS_DISTRO=jazzy` still
+builds one locally. Why these four, and how the table is kept current:
+[docs/ros-distributions.md](docs/ros-distributions.md).
 
 ## Documentation
 
