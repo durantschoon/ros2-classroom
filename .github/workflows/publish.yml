@@ -1,0 +1,133 @@
+name: Publish images
+
+# Publishes every distribution in distros.json to ghcr: :<name> for each, and
+# :latest for the default, for linux/amd64 and linux/arm64.
+#
+# - workflow_run: after the "Docker image" workflow succeeded for a push to
+#   main, so nothing untested is published.  GitHub runs workflow_run only for
+#   workflow files on the default branch, so this publishes for the first time
+#   once this file is on main.
+# - workflow_dispatch: a manual re-publish; it pushes only when run on main.
+# - pull_request: a build-only dry run; nothing is pushed.
+on:
+  workflow_run:
+    workflows: ["Docker image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in step with compose.yaml's default IMAGE_NAME.
+  IMAGE: ghcr.io/durantschoon/ros2-classroom
+  # Only a successful test run of a push to main in this repository, or a
+  # manual run on main, publishes.  A pull request whose head branch happens
+  # to be called main (from a fork) also reaches workflow_run as "main", hence
+  # the event and repository checks.
+  PUBLISH: >-
+    ${{
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    }}
+
+jobs:
+  # The names and the default, read from the table rather than hard-coded.
+  distros:
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'push'
+          && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.table.outputs.names }}
+      default: ${{ steps.table.outputs.default }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Read distros.json
+        id: table
+        run: |
+          echo "names=$(jq -c '.distros | keys' distros.json)" | tee -a "$GITHUB_OUTPUT"
+          echo "default=$(jq -r '.default' distros.json)" | tee -a "$GITHUB_OUTPUT"
+
+  publish:
+    needs: distros
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ${{ fromJSON(needs.distros.outputs.names) }}
+    steps:
+      # The tested commit is the one published.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # The same resolution make does: the distribution's base-image digest.
+      - name: Resolve the distribution
+        id: resolve
+        env:
+          ROS_DISTRO: ${{ matrix.distro }}
+        run: ./scripts/distros env --make | tee -a "$GITHUB_OUTPUT"
+
+      - name: Tags
+        id: tags
+        env:
+          DISTRO: ${{ matrix.distro }}
+          DEFAULT: ${{ needs.distros.outputs.default }}
+        run: |
+          {
+            echo "list<<EOF"
+            echo "$IMAGE:$DISTRO"
+            if [ "$DISTRO" = "$DEFAULT" ]; then echo "$IMAGE:latest"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # arm64 by emulation.
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build for linux/amd64 and linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          build-args: |
+            ROS_DISTRO=${{ steps.resolve.outputs.ROS_DISTRO }}
+            ROS_BASE_DIGEST=${{ steps.resolve.outputs.ROS_BASE_DIGEST }}
+          tags: ${{ steps.tags.outputs.list }}
+          cache-from: type=gha,scope=${{ matrix.distro }}
+          cache-to: type=gha,scope=${{ matrix.distro }}
+
+      - name: Say what happened
+        env:
+          EVENT: ${{ github.event_name }}
+          TAGS: ${{ steps.tags.outputs.list }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            echo "Pushed for linux/amd64,linux/arm64 ($EVENT):"
+          else
+            echo "Dry run ($EVENT): built for linux/amd64,linux/arm64, nothing pushed:"
+          fi
+          echo "$TAGS"

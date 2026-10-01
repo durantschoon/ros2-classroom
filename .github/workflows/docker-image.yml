@@ -4,9 +4,58 @@ on:
   push:
     branches: ["main", "python-port", "multi-distro", "docker/**"]
   pull_request:
+  # Every distribution in distros.json, nightly.
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
+    inputs:
+      distros:
+        description: >-
+          Which distributions to smoke-test and build for arm64: "all", or
+          names from distros.json separated by spaces or commas
+        required: false
+        default: all
+        type: string
 
 jobs:
+  # Which distributions this run covers, read from distros.json rather than
+  # hard-coded: the default alone on pushes and pull requests, every one on
+  # the nightly schedule and on manual dispatch (or the names dispatch asks for).
+  distros:
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.table.outputs.names }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Choose the distributions
+        id: table
+        env:
+          EVENT: ${{ github.event_name }}
+          WANTED: ${{ inputs.distros }}
+        run: |
+          set -eu
+          all=$(jq -c '.distros | keys' distros.json)
+          default=$(jq -c '[.default]' distros.json)
+          case "$EVENT" in
+            schedule) names=$all ;;
+            workflow_dispatch)
+              if [ "${WANTED:-all}" = all ]; then
+                names=$all
+              else
+                names=$(printf '%s\n' "$WANTED" | tr ', ' '\n' | jq -Rcs 'split("\n") | map(select(length > 0)) | unique')
+                unknown=$(jq -cn --argjson want "$names" --argjson all "$all" '$want - $all')
+                if [ "$unknown" != "[]" ] || [ "$names" = "[]" ]; then
+                  echo "::error::distros must be \"all\" or names from $all; got: $WANTED"
+                  exit 1
+                fi
+              fi
+              ;;
+            *) names=$default ;;
+          esac
+          echo "Distributions for this $EVENT run: $names"
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -39,27 +88,47 @@ jobs:
 
   smoke:
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, distros]
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ${{ fromJSON(needs.distros.outputs.names) }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      # ci-annotate re-prints any FAIL lines as annotations, which are readable
-      # on the pull request without signing in; job logs are not.
+      # The same resolution make does: the distribution's base digest, image
+      # tag, compose project and port.  ci-annotate re-prints any FAIL lines as
+      # annotations, which are readable on the pull request without signing
+      # in; job logs are not.
       - name: Build and run the smoke tests
-        run: ./scripts/ci-annotate smoke -- ./scripts/smoke-container
+        env:
+          ROS_DISTRO: ${{ matrix.distro }}
+        run: |
+          eval "$(./scripts/distros env)"
+          ./scripts/ci-annotate "smoke $ROS_DISTRO" -- ./scripts/smoke-container
 
   # Second architecture: build only.  GitHub's arm64 runners cannot run the
   # graphical smoke tests reliably, so this guards the package availability
   # that Apple Silicon depends on.
   build-arm64:
     runs-on: ubuntu-24.04-arm
-    needs: lint
+    needs: [lint, distros]
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ${{ fromJSON(needs.distros.outputs.names) }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve the distribution
+        id: resolve
+        env:
+          ROS_DISTRO: ${{ matrix.distro }}
+        run: ./scripts/distros env --make | tee -a "$GITHUB_OUTPUT"
 
       - name: Build for linux/arm64
         uses: docker/build-push-action@v6
@@ -68,6 +137,9 @@ jobs:
           platforms: linux/arm64
           push: false
           load: true
+          build-args: |
+            ROS_DISTRO=${{ steps.resolve.outputs.ROS_DISTRO }}
+            ROS_BASE_DIGEST=${{ steps.resolve.outputs.ROS_BASE_DIGEST }}
           tags: ros2-tutorials:arm64-ci
 
       - name: Headless ROS checks

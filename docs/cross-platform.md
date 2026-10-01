@@ -91,6 +91,16 @@ Arguments can be written either way: `PKG=my_robot NODE=talker`, as in the
 make examples, or `-Pkg my_robot -Node talker`. Any other `NAME=value`, such
 as `NOVNC_PORT=6081`, is set in the environment for that run, as make does.
 
+**ROS distributions.** `.\ros2.ps1 distros` lists the four in `distros.json`
+(humble, jazzy, kilted, and lyrical, the default), each with its own port.
+Choose one per command with `ROS_DISTRO=<name>`, e.g.
+`.\ros2.ps1 up ROS_DISTRO=jazzy` then `.\ros2.ps1 open ROS_DISTRO=jazzy`, or
+once in `.env`. Each has its own `/workspace`, so switching keeps the others'
+work, and each is published prebuilt, so `up` pulls it rather than building.
+The port is chosen as in make: `NOVNC_PORT=` on the command line, then the
+environment, then the table; see
+[ros-distributions.md](ros-distributions.md).
+
 Two small differences from make on Linux and macOS: `.\ros2.ps1 up` pulls the
 prebuilt image rather than expecting `make image` first, and `doctor` checks
 Docker Desktop only (Windows has no Podman path).

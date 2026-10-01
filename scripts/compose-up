@@ -6,14 +6,15 @@ does not -- it only creates containers that are missing.  Without this check,
 `make image` followed by `make up` keeps running the OLD image on Podman, with
 no warning.  Comparing image ids here gives both engines Docker's behaviour.
 
-Expects COMPOSE and ENGINE from the Makefile, and IMAGE_TAG and NOVNC_PORT
-when the ROS distribution is not the default.
+Expects COMPOSE and ENGINE from the Makefile, and IMAGE_TAG, NOVNC_PORT and
+ROS_DISTRO when the ROS distribution is not the default.
 
 Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
 """
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -32,6 +33,9 @@ DEFAULT_IMAGE_TAG = "latest"
 # Every distribution has a host port of its own there; a busy port is never
 # answered with another distribution's.
 TABLE_PATH = REPO / "distros.json"
+
+# The shape of a distribution's name, as scripts/distros accepts it.
+DISTRO_NAME = re.compile(r"[a-z][a-z0-9_-]*")
 
 # The `name:` in compose.yaml, used when nothing overrides the project.
 DEFAULT_PROJECT = "ros2-tutorials"
@@ -173,8 +177,36 @@ def port_to_suggest(port: str, taken: FrozenSet[int] = frozenset()) -> str:
     return str(candidate)
 
 
-def busy_port_hint(port: str, taken: FrozenSet[int] = frozenset()) -> List[str]:
-    """What to say when `up` fails: by far the likeliest cause is a taken port."""
+def table_default(text: str) -> str:
+    """The default distribution's name in distros.json; "" if unreadable."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return ""
+    default = data.get("default") if isinstance(data, dict) else None
+    return default if isinstance(default, str) else ""
+
+
+def distro_words(distro: str, default: str) -> str:
+    """`ROS_DISTRO=<name> ` for a distribution other than the default, else "".
+
+    Without it, the suggested `make up` would start the default instead.  Only
+    a name of the table's own shape is ever printed, so it stays paste-safe.
+    """
+    if not DISTRO_NAME.fullmatch(distro) or distro == default:
+        return ""
+    return "ROS_DISTRO={} ".format(distro)
+
+
+def busy_port_hint(
+    port: str, taken: FrozenSet[int] = frozenset(), distro: str = "", default: str = ""
+) -> List[str]:
+    """What to say when `up` fails: by far the likeliest cause is a taken port.
+
+    `distro` is the ROS distribution being started and `default` the table's
+    default; the suggested commands name the distribution unless it is the
+    default.
+    """
     lines = [
         "",
         "The desktop did not start. If the error above says the port is already",
@@ -182,9 +214,12 @@ def busy_port_hint(port: str, taken: FrozenSet[int] = frozenset()) -> List[str]:
     ]
     suggestion = port_to_suggest(port, taken)
     if suggestion:
+        words = distro_words(distro, default)
         lines += [
             "Move the desktop to another one, and open it there:",
-            "  make up NOVNC_PORT={0} && make open NOVNC_PORT={0}".format(suggestion),
+            "  make up {1}NOVNC_PORT={0} && make open {1}NOVNC_PORT={0}".format(
+                suggestion, words
+            ),
         ]
     return lines
 
@@ -232,11 +267,12 @@ def running_image_id(engine: Engine, container: str) -> str:
     return "" if found is None else found
 
 
-def read_table_ports() -> FrozenSet[int]:
+def read_table() -> str:
+    """distros.json's text, or "" when it cannot be read."""
     try:
-        return table_ports(TABLE_PATH.read_text(encoding="utf-8"))
+        return TABLE_PATH.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return frozenset()
+        return ""
 
 
 def required(name: str) -> str:
@@ -296,8 +332,12 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     if status != 0:
+        table = read_table()
         hint = busy_port_hint(
-            os.environ.get("NOVNC_PORT") or DEFAULT_NOVNC_PORT, read_table_ports()
+            os.environ.get("NOVNC_PORT") or DEFAULT_NOVNC_PORT,
+            table_ports(table),
+            os.environ.get("ROS_DISTRO", ""),
+            table_default(table),
         )
         for line in hint:
             print(line, file=sys.stderr)

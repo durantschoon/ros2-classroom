@@ -274,7 +274,7 @@ class MalformedTableTests(DistrosTreeCase):
         self.assertStatus(run, 1)
         self.assertEqual("", run.stdout)
         self.assertEqual(1, len(run.err_lines), run.report())
-        self.assertTrue(run.err.startswith(str(self.table_path) + ": "), run.report())
+        self.assertTrue(run.err.startswith(str(self.table_path.resolve()) + ": "), run.report())
         self.assertNotIn("Traceback", run.err)
 
     def test_not_json(self):
@@ -295,7 +295,7 @@ class MalformedTableTests(DistrosTreeCase):
         run = self.distros("env")
         self.assertStatus(run, 1)
         self.assertEqual(1, len(run.err_lines), run.report())
-        self.assertTrue(run.err.startswith(str(self.table_path) + ": "), run.report())
+        self.assertTrue(run.err.startswith(str(self.table_path.resolve()) + ": "), run.report())
 
 
 class UsageTests(DistrosTreeCase):
@@ -430,7 +430,7 @@ class PortTableTests(DistrosTreeCase):
         self.assertStatus(run, 1)
         self.assertEqual("", run.stdout)
         self.assertEqual(1, len(run.err_lines), run.report())
-        self.assertTrue(run.err.startswith(str(self.table_path) + ": "), run.report())
+        self.assertTrue(run.err.startswith(str(self.table_path.resolve()) + ": "), run.report())
         for needle in needles:
             self.assertHas(run, needle, where="stderr")
         return run
