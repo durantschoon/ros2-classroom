@@ -33,6 +33,20 @@ Deviation. If it is still missing, invoke the Blocked protocol.
 
 ## The change
 
+### 0. `make check` on macOS (added 2026-10-01)
+
+Measured by the coordinator on this host (macOS, see the README's environment
+facts) at `7700c8e`: `make check` fails, 27 failures, all in
+`tests/host/test_distros.py`, all the same assertion: the script names the
+table by its resolved path (`scripts/distros` uses `Path(__file__).resolve()`),
+`/private/tmp/ros2-host-test-…/tree/distros.json`, and the test expects the
+unresolved `/tmp/ros2-host-test-…`. CI (Linux, no symlink) is green. The
+coordinator's trial: comparing against `self.table_path.resolve()` at the
+three `run.err.startswith(str(self.table_path) + ": ")` sites took the module
+to 54/54 on this host. The script's behaviour is right (a student is told the
+real path); fix the tests, nothing else. Record your own before-and-after
+counts; do not copy these.
+
 ### 1. Per-distribution fixes, only if the self-test demands them
 
 Run the isolated self-test (see "Running alongside stage 14") for humble,
@@ -121,14 +135,17 @@ coordinator sketched and the user accepted:
   `guix` branch section, which is still true.
 - `docs/cross-platform.md`: the same for `ros2.ps1`, one short paragraph.
 
-## Running alongside stage 14
+## Running alongside stage 07
 
-Stage 14 (`pkg build --changed`) runs at the same time on another integration
-branch, `pkg-helpers`. Do not touch `docker/scripts/pkg`,
-`docs/creating-packages.md`, `tests/host/fakes.py`, or any
-`tests/host/test_pkg*` file. Your self-tests must not collide with its, nor
-with the user's desktop (6080), the distributions' ports (6082-6084), or the
-coordinator's trial containers (6091-6093). Use exactly, per distribution:
+Revised 2026-10-01: stage 14 is not running. Stage 07 (the first-run question)
+runs at the same time on another integration branch, `native-recipes`. Do not
+touch `Makefile`, `scripts/workstation-help`, `ros2.ps1`, `.gitignore`,
+`docs/roadmap.md`, `tests/host/fakes.py`, `tests/host/test_workstation_help.py`
+or `tests/host/test_ros2_ps1.py`; none is in your allowed files anyway. Both
+stages edit `README.md`, in different sections: keep your README edits to the
+sections item 3 names. Your self-tests must not collide with stage 07's
+(6097), the user's desktop (6080), or the distributions' ports (6082-6084).
+Use exactly, per distribution:
 
 ```sh
 SELFTEST_PROJECT=ros2-tutorials-st13 SELFTEST_NOVNC_PORT=6096 SELFTEST_ROS_DOMAIN_ID=13 IMAGE_NAME=ros2-tutorials-st13 make selftest ROS_DISTRO=<name>
@@ -138,13 +155,15 @@ one at a time, and remove the `ros2-tutorials-st13:*` images at the end.
 **Never run `make selftest` without `IMAGE_NAME`** (README, "Every self-test,
 by anyone, sets IMAGE_NAME").
 
-**No pushes tonight.** The host's SSH agent refuses to sign, so `git push`
-and `git fetch` fail, and the CLI token cannot push workflow changes. Do
-everything that runs locally. Verification 3 (the CI dry run) needs a push:
-try once; if it fails, record "not run: push refused" with the error and do
-not treat it as Blocked. The coordinator runs it when pushing works. Use
-`actionlint` (a static binary is fine, in your scratchpad) so the workflows
-are at least checked locally.
+**Pushing works on this host** (revised 2026-10-01; the old WSL host's SSH
+agent refused to sign). Verification 3 is expected to run. If a push is
+refused anyway, record "not run: push refused" with the error; that is not
+Blocked. Use `actionlint` (a portable binary in your scratchpad; see the
+README's environment facts) so the workflows are also checked locally.
+
+**This host is arm64.** Local self-tests build `linux/arm64` images natively;
+the amd64 side of each distribution is proved only by CI (the `smoke` job and
+the publish dry run). Say so in the report rather than emulating amd64 here.
 
 ## Ground rules
 
@@ -161,6 +180,7 @@ are at least checked locally.
 - `README.md`, `docs/ros-distributions.md`, `docs/cross-platform.md`, `.env.example`
 - `scripts/compose-up`, `tests/host/test_compose_up.py` — the busy-port hint only
 - `scripts/smoke-container`, `tests/host/test_smoke_container.py` — only if the jazzy cause is in the suite
+- `tests/host/test_distros.py` — item 0's path comparison only
 - `tests/host/**` — only for tests pinning an item-1 fix
 - `docs/stages/stage-13-REPORT.md` (new)
 
@@ -181,6 +201,9 @@ are at least checked locally.
 
 ## Definition of Done
 
+- Baseline on the unmodified base: `make lint` and `make check`. Item 0's
+  failures in `tests/host/test_distros.py` are expected there and are not a
+  "gate already fails" block; any *other* baseline failure is.
 - The gates; all four local self-tests pass; `actionlint` clean; the dry-run
   CI run green, or recorded as "not run: push refused".
 - `git diff multi-distro --stat` shows only allowed files.

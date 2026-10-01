@@ -14,19 +14,22 @@ and verified end to end, and that promotion is the user's call.
 | Integration branch | Work | Stages | State |
 |---|---|---|---|
 | `python-port` | Shell scripts to Python | 01-06 | merged to `main` (`a24571d` before the v1.0 rewrite, `6533659` after), branch deleted |
-| `native-commands` | Roadmap Stage 2, "What you would have run" | 07-10 | in progress; still on the pre-v1.0 history (see below) |
+| `native-commands` | Roadmap Stage 2, first attempt | 07 (prompt only) | frozen 2026-10-01: the pre-v1.0 record of stages 01-07, never merged, never force-pushed |
+| `native-recipes` | Roadmap Stage 2, "What you would have run" | 07-10 | in progress; branched from `multi-distro` at the stage 07 re-author (2026-10-01), promoted after it |
 | `multi-distro` | Four ROS 2 distributions from one table | 11-13 | in progress |
 | `pkg-helpers` | Student helpers inside the container (`pkg build --changed` first) | 14- | in progress; branched from `multi-distro` at stage 12, promoted after it |
 
 **v1.0 and the redaction.** At the v1.0 release `main` was rewritten without
 `docs/stages/`, and its commits got new hashes. The records of stages 01-07
-survive on `native-commands`, which still carries the old history; what
-happens to that branch is the user's decision, pending. `multi-distro` branches
+survive on `native-commands`, which still carries the old history. The user
+decided (2026-10-01) to start roadmap Stage 2 now: its stage 07 prompt was
+re-authored for the rewritten history on a new integration branch,
+`native-recipes`, and `native-commands` is left as it is, an archive. `multi-distro` branches
 from the rewritten `main`, so it starts `docs/stages/` again with this README
 and its own stages. Process records live here until the next release (v1.1),
 which redacts them again.
 
-`native-commands` is a branch for a reason particular to it: stage 07 adds a
+`native-recipes` is a branch for a reason particular to it: stage 07 adds a
 question whose second answer shows nothing until the recipes of stages 08 and
 09 exist. `main` must never offer a student a choice that does nothing.
 
@@ -71,6 +74,30 @@ requests: `lint` (with `make check`), `smoke`, `smoke-podman`, `build-arm64`,
 and `scan`. The first fully green run was on `90998fd`.
 
 ## Environment facts executors need
+
+**From 2026-10-01 the coordinator runs on macOS** (Apple Silicon, Darwin 27),
+measured that day:
+
+- Docker 29.4.0 (OrbStack, `linux/arm64`), Docker Compose v5.1.2. No Podman.
+- `python3` is 3.12.0; `/usr/bin/python3` is the Command Line Tools' 3.9.6, so
+  real Python 3.9 is `/usr/bin/python3 -m unittest discover -s tests/host`, no
+  container needed.
+- `/usr/bin/make` is GNU Make 3.81. `script` is BSD's:
+  `script -q /dev/null <command>`, not `script -qc`.
+- No `pwsh` and no `actionlint` installed. Fetch portable builds into your
+  scratchpad (PowerShell's `powershell-7.*-osx-arm64.tar.gz` and actionlint's
+  `darwin_arm64` tarball from their GitHub releases) and point at them
+  (`PWSH=/path/to/pwsh make check`). Do not install anything system-wide.
+- `rm` is aliased to a trash command in interactive shells; it prints `mv:`
+  errors for missing files. Harmless.
+- `git push` over SSH works.
+- `/tmp` and `/var` are symlinks into `/private`. A path a script resolves
+  (`Path(...).resolve()`) and the same path a test built from `tempfile` differ.
+  This broke 27 tests of `tests/host/test_distros.py` on this host at
+  `7700c8e` (CI, on Linux, is green); stage 13 fixes the tests.
+- Busy host ports, not ours: 4001, 5001, 8080, 8081.
+
+Before 2026-10-01 the host was WSL 2:
 
 - Rootless Podman 3.4.4 with podman-compose 1.6.0 (host: WSL 2, Ubuntu 22.04).
 - zsh prints a harmless `add_to_front_of_path: no matches found` line on every
@@ -270,6 +297,9 @@ is smoke-tested on every push, all four nightly; the branch reaches `main` by a
 pull request the coordinator opens and the user merges; after multi-distro the
 quiz comes first, which first needs the user's decision on `native-commands`
 (it still carries pre-v1.0 history).
+User decision, 2026-10-01: stage 13 and roadmap Stage 2 (`native-recipes`)
+run now, side by side; stage 14 (`pkg-helpers`) waits. The quiz waits for
+Stage 2's recipes, whose printed commands are its answer key.
 After stage 13 merges, the coordinator deletes the user's reference branch
 `publish-for-stage13` from origin (the user's instruction, 2026-09-29).
 
@@ -349,10 +379,25 @@ From stage 11, for stage 12 unless noted:
 
 | Stage | Kind | Scope | State |
 |---|---|---|---|
-| 07 | Feature | The first-run question, its saved answer, `make choose`, and the `EXPLAIN` override | authored |
-| 08 | Feature | The recipe data model and platform detection; the self-test pins `EXPLAIN=0` | planned |
+| 07 | Feature | The first-run question, its saved answer, `make choose`, and the `EXPLAIN` override; the same in `ros2.ps1` (the parity test requires `choose` there) | re-authored 2026-10-01 on `native-recipes` |
+| 08 | Feature | The recipe data model and platform detection; the self-test pins `EXPLAIN=0`. Recipes are indexed by distribution too: `ros_distro` is a decision point, and multi-distro made it a live one | planned |
 | 09 | Feature | Linux/apt recipes, verified for real in CI; targets print them | planned |
-| 10 | Feature | macOS and WSL recipes, entering as `verified-by-hand` or `community-reported` (retro first) | planned |
+| 10 | Feature | macOS recipes through **pixi** and RoboStack, and WSL recipes, entering as `verified-by-hand` or `community-reported` (retro first) | planned |
+
+**User decision, 2026-10-01: the macOS commands use pixi.** Not Homebrew, and
+not a bare conda. RoboStack's own getting-started page (read 2026-10-01) lists
+humble, jazzy, kilted and lyrical for `osx-arm64` and `osx-64`, installed as
+`pixi init <ws> --channel https://prefix.dev/robostack-<distro>` then
+`pixi add ros-<distro>-desktop`, so every distribution in `distros.json` has
+a macOS route. Building a workspace also needs colcon and compilers in the
+environment; the exact package list is stage 10's to measure, not assumed here.
+Consequences for the plan: the roadmap's design sketch ("macOS/brew + native
+ROS or RoboStack") and the Stage 4 decision-point table's package-manager
+values gain `pixi`; stage 07 makes those two doc edits, stage 08's model
+carries `pixi` as a closed value, and stage 10 verifies each macOS recipe by
+hand on this host before it may be marked `verified-by-hand`. RoboStack also
+publishes `win-64`; a pixi route for Windows without WSL is an idea, not a
+plan (the roadmap's Windows-means-WSL decision stands).
 
 These are new features, not ports, so guardrail 8 reads differently: existing
 behaviour is preserved exactly for a student who answers 1 or is never asked.
