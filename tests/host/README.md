@@ -103,6 +103,28 @@ tests need `make`, `bash`, `seq`, `awk` and a few other system tools. Where one
 is missing — the Python 3.9 container used for the grammar check, for instance —
 the whole file skips.
 
+## Scripts that ask: a terminal, and a copy of the tree
+
+`scripts/explain-choice` asks the first-run question only when stdin and
+stdout are both terminals, and saves the answer in
+`.workstation/preferences.json` beside the repository, found from its own
+location. So `test_explain_choice.py` (and the matching tests in
+`test_ros2_ps1.py`) do two things:
+
+- **They copy the script into a temporary tree** (with the `Makefile`,
+  `distros.json` and `scripts/` for the Makefile tests, or `ros2.ps1` for
+  PowerShell) and run it from a different directory. Nothing is ever written
+  inside the repository, and a script that looked for its root in the current
+  directory would fail them.
+- **They give it a real terminal.** `fakes.run_on_pty(argv, env, cwd,
+  keys=..., prompt=...)` runs the command on a pseudo-terminal and types each
+  key once `prompt` has appeared, so an answer is typed only when asked for;
+  `stdout_on_pty=False` captures stdout and stderr instead, the self-test's
+  shape (a terminal for input, output captured). The child takes the pty as
+  its controlling terminal, without which Ctrl-C (`\x03`) never becomes
+  SIGINT. On macOS the master end reports EOF slightly before the child exits,
+  so the runner waits for the child after EOF rather than polling once.
+
 ## Skips
 
 `open-url` decides it is on WSL by reading `/proc/version` as well as

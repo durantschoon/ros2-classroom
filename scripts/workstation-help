@@ -33,7 +33,12 @@ class Topic(Enum):
     BUILD = "build"
     RUN = "run"
     TEST = "test"
+    CHOOSE = "choose"
 
+
+# Targets with help but no examples; the overview marks only targets that
+# have both.
+HELP_ONLY = (Topic.CHOOSE,)
 
 class Row(NamedTuple):
     command: str
@@ -76,6 +81,8 @@ def groups(url: str) -> Tuple[Group, ...]:
             Row("make image", "Build the image (slow the first time, cached after)", None),
             Row("make distros",
                 "List the ROS 2 distributions; pick one with ROS_DISTRO=name", None),
+            Row("make choose",
+                "Change your answer to the question asked the first time", None),
         )),
         Group("Every session", (
             Row("make up", "Start the desktop", None),
@@ -361,6 +368,33 @@ make test -- run your packages' tests and report the real verdict
 
   Next:  make test examples""",
 
+    (Topic.CHOOSE, Section.HELP): """\
+make choose -- change your answer to the first-run question
+
+  The question
+    The first time you run make up, make shell or another target that
+    does something, you are asked whether to see, as well, the commands
+    that should do the same thing directly on your own system, with no
+    container involved.
+
+  The two answers
+    1  Just run things for me in the browser workstation.
+    2  Do that, AND show me the native commands, each marked with how
+       well it has been checked.
+
+  make choose shows your current answer and asks again. Without a
+  terminal to ask on, nothing is asked and nothing is saved.
+
+  Where it is saved
+    .workstation/preferences.json in this checkout. Nothing else reads
+    or sends it.
+
+  For one command only
+    EXPLAIN=0      as answer 1
+    EXPLAIN=1      as answer 2
+    EXPLAIN=only   show the native commands without running anything
+    e.g.  make build EXPLAIN=1""",
+
     (Topic.TEST, Section.EXAMPLES): """\
 make test -- examples
 
@@ -438,6 +472,13 @@ def render_overview(request: Request, bold: bool) -> str:
     return "\n".join(lines)
 
 
+def missing_examples(request: Request) -> Tuple[Topic, ...]:
+    """Topics asked for examples they do not have."""
+    if Section.EXAMPLES not in request.sections:
+        return ()
+    return tuple(topic for topic in request.topics if topic in HELP_ONLY)
+
+
 def render_topics(request: Request) -> str:
     sections = request.sections or (Section.HELP,)
     blocks = []
@@ -448,10 +489,17 @@ def render_topics(request: Request) -> str:
 
 
 def render_topic_list() -> str:
-    names = "  ".join(t.value for t in Topic)
+    names = "  ".join(t.value for t in Topic if t not in HELP_ONLY)
     return ("These targets have help and examples:  {}\n"
             "  make <target> help\n"
             "  make <target> examples".format(names))
+
+
+def render_no_examples(topics: Sequence[Topic]) -> str:
+    names = " ".join(t.value for t in topics)
+    return ("No examples for: {}\n"
+            "Nothing was run.\n\n"
+            "  make {} help   says what it does".format(names, topics[0].value))
 
 
 def render_unknown(unknown: Sequence[str]) -> str:
@@ -477,6 +525,9 @@ def main(argv: Sequence[str]) -> int:
         # A word that is neither a topic nor a section, e.g. `make up help`.
         # Refuse rather than guess, and say plainly that nothing ran.
         print(render_unknown(request.unknown), file=sys.stderr)
+        return 2
+    if missing_examples(request):
+        print(render_no_examples(missing_examples(request)), file=sys.stderr)
         return 2
     if request.topics:
         print(render_topics(request))

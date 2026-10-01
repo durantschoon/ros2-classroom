@@ -77,7 +77,8 @@ else
 
 .PHONY: help examples engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
-	package build run test logs ps down reset uninstall selftest check lint digest distros
+	package build run test logs ps down reset uninstall selftest check lint digest distros \
+	first-run choose
 
 # All help text lives in scripts/workstation-help, which prints targets that
 # have their own `help` and `examples` in bold on a terminal, or marked with
@@ -100,6 +101,19 @@ distros:
 doctor:
 	@./scripts/check-host
 
+# The first-run question: whether to show, as well, the commands that would do
+# the same thing natively.  Asked once, before the first student target that
+# runs on a terminal; with no terminal it asks nothing and saves nothing.  The
+# answer lives in .workstation/preferences.json; EXPLAIN=0, EXPLAIN=1 or
+# EXPLAIN=only overrides it for one command.  Diagnostics and maintenance
+# targets never ask.
+first-run:
+	@./scripts/explain-choice --ask-once
+
+# Change that answer.
+choose:
+	@./scripts/explain-choice --choose
+
 # Targets that exec into the desktop need it running; say so plainly rather than
 # surfacing the engine's "no such container" error.
 require-desktop: require-engine
@@ -120,7 +134,7 @@ image: require-engine
 
 # compose-up recreates the desktop when `make image` has produced a newer image,
 # which podman-compose would otherwise silently skip.
-up: require-engine
+up: first-run require-engine
 	@COMPOSE='$(COMPOSE)' ENGINE='$(ENGINE)' $(QUIET) ./scripts/compose-up
 	@echo
 	@echo 'The desktop is starting. Next:  make open'
@@ -128,7 +142,7 @@ up: require-engine
 # Waits for noVNC first: straight after `make up` the desktop is still starting,
 # and opening early shows "failed to connect".  The instructions come after the
 # browser opens, because only then is there anything to right-click.
-open:
+open: first-run
 	@if command -v curl >/dev/null 2>&1; then \
 	    i=0; until curl -fsS -o /dev/null --max-time 2 '$(URL)/vnc.html' 2>/dev/null; do \
 	        i=$$((i + 1)); \
@@ -166,13 +180,13 @@ open:
 	@echo '    your browser would otherwise keep for itself.'
 
 # A one-off container, so it works whether or not the desktop is running.
-shell: require-engine
+shell: first-run require-engine
 	@echo 'Entering a ROS shell. Type exit to come back.'
 	@echo 'Not sure what to type? exit, then:  make shell examples'
 	@echo
 	$(COMPOSE) run --rm shell
 
-turtlesim: require-engine
+turtlesim: first-run require-engine
 	$(DESKTOP_EXEC) 'nohup ros2 run turtlesim turtlesim_node >/tmp/turtlesim.log 2>&1 &'
 	@echo 'turtlesim started on the browser desktop ($(URL)).'
 	@echo
@@ -187,7 +201,7 @@ turtlesim: require-engine
 # teleoperation, but turtle_teleop_key only ever drives turtlesim.  The colours
 # are pinned because the instructions tell students to click "the white
 # window"; xterm's default would otherwise depend on which X resources load.
-turtlesim-teleop: require-engine
+turtlesim-teleop: first-run require-engine
 	$(DESKTOP_EXEC) "nohup xterm -title 'turtlesim teleop (arrow keys)' -bg white -fg black -u8 -fa 'DejaVu Sans Mono' -fs 11 -e bash -lc turtlesim-teleop >/tmp/teleop.log 2>&1 &"
 	@echo 'turtlesim teleop opened on the browser desktop.'
 	@echo
@@ -216,18 +230,18 @@ teleop:
 # a student can see they could have typed `ros2 pkg create` or `colcon build`
 # themselves.  See docs/creating-packages.md.
 
-package: require-desktop
+package: first-run require-desktop
 	@[ -n "$(PKG)" ] || { \
 	    echo 'usage: make package PKG=name [TEMPLATE=pubsub|param] [PYTHON=1] [INTERFACES=1]'; \
 	    echo 'e.g.   make package PKG=my_robot TEMPLATE=pubsub'; exit 2; }
 	$(PKG_EXEC) 'pkg new $(PKG)$(if $(PYTHON), --python)$(if $(TEMPLATE), --template $(TEMPLATE))$(if $(INTERFACES), --interfaces)'
 
-build: require-desktop
+build: first-run require-desktop
 	$(PKG_EXEC) 'pkg build $(PKG)'
 
 # Foreground, so Ctrl-C stops the node.  A TTY is requested only when there is
 # one to give; without that check the engine refuses to run from scripts or CI.
-run: require-desktop
+run: first-run require-desktop
 	@[ -n "$(PKG)" ] && [ -n "$(NODE)" ] || { \
 	    echo 'usage: make run PKG=name NODE=executable'; \
 	    echo 'make build PKG=name  lists the executables it built.'; exit 2; }
@@ -235,7 +249,7 @@ run: require-desktop
 	$(QUIET) $(COMPOSE) exec $$tty -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(SERVICE) \
 	    bash -lc 'pkg run $(PKG) $(NODE)'
 
-test: require-desktop
+test: first-run require-desktop
 	$(PKG_EXEC) 'pkg test $(PKG)'
 
 # podman-compose passes --color to `podman logs`, which Podman 3.x rejects, so

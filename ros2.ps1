@@ -327,6 +327,159 @@ function Invoke-InDesktop([string]$Script, [switch]$Interactive) {
     Invoke-Native $argv
 }
 
+# --- the first-run question ----------------------------------------------------
+# The same contract as scripts/explain-choice, written out here because Windows
+# may have no Python: the same question, the same answers, the same file
+# (.workstation/preferences.json next to this script) and the same JSON, so a
+# student using both make and this script on one checkout is asked once.
+# EXPLAIN=0, EXPLAIN=1 or EXPLAIN=only, in the environment or as an argument,
+# overrides the saved answer for one command.  With no terminal to ask on,
+# nothing is asked and nothing is saved.  Change one script, change both.
+
+$PreferencesPath = Join-Path (Join-Path $scriptDir ".workstation") "preferences.json"
+$ChooseCommand = ".\ros2.ps1 choose"
+# The commands that ask first: the same student commands as the Makefile's,
+# plus desktop, the default, which is up then open and asks once.
+$AskOnceCommands = @("desktop", "up", "open", "shell", "turtlesim", "turtlesim-teleop", "package", "build", "run", "test")
+
+function Test-Terminal {
+    return (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected)
+}
+
+function Get-ExplainOverride {
+    <# EXPLAIN as off/on/only, "" when unset or empty; stops on anything else. #>
+    $raw = "$env:EXPLAIN"
+    if (-not $raw) { return "" }
+    if ($raw -ceq "0") { return "off" }
+    if ($raw -ceq "1") { return "on" }
+    if ($raw -ceq "only") { return "only" }
+    Write-Host "EXPLAIN=$raw is not understood. Use EXPLAIN=0, EXPLAIN=1 or EXPLAIN=only."
+    exit 2
+}
+
+function Get-SavedProblem([string]$Text) {
+    <# What is wrong with the saved file's text, in explain-choice's words, or "". #>
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "it is not JSON" }
+    try {
+        $data = $Text | ConvertFrom-Json
+    } catch {
+        return "it is not JSON"
+    }
+    if ($data -isnot [System.Management.Automation.PSCustomObject]) { return 'it is not an object with "version" and "explain"' }
+    $names = @($data.PSObject.Properties | ForEach-Object { $_.Name })
+    $version = $data.version
+    if ($names -cnotcontains "version" -or ($version -isnot [int] -and $version -isnot [long]) -or $version -ne 1) { return 'its "version" is not 1' }
+    if ($names -cnotcontains "explain") { return 'it has no "explain"' }
+    if ($data.explain -isnot [string] -or ($data.explain -cne "off" -and $data.explain -cne "on")) { return 'its "explain" is neither "off" nor "on"' }
+    return ""
+}
+
+function Read-SavedAnswer {
+    <# The saved answer, off or on, or "".  An unreadable file is said, never dropped. #>
+    if (-not (Test-Path -LiteralPath $PreferencesPath -PathType Leaf)) { return "" }
+    try {
+        $text = [System.IO.File]::ReadAllText($PreferencesPath)
+    } catch {
+        Write-Host "${PreferencesPath}: the saved answer could not be read: it cannot be opened; treating it as not saved."
+        return ""
+    }
+    $problem = Get-SavedProblem $text
+    if ($problem) {
+        Write-Host "${PreferencesPath}: the saved answer could not be read: $problem; treating it as not saved."
+        return ""
+    }
+    return "$(($text | ConvertFrom-Json).explain)"
+}
+
+function Save-Answer([string]$Explain) {
+    <# Write the answer atomically: a temporary file beside it, then a rename. #>
+    $dir = Split-Path -Parent $PreferencesPath
+    $temp = Join-Path $dir ".preferences.$PID.tmp"
+    try {
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { [void](New-Item -ItemType Directory -Path $dir) }
+        # The same bytes explain-choice writes: LF, and UTF-8 with no BOM.
+        $text = '{"version": 1, "explain": "' + $Explain + '"}' + "`n"
+        [System.IO.File]::WriteAllText($temp, $text, (New-Object System.Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $PreferencesPath) {
+            # [NullString]: PowerShell would pass $null as "", which Replace refuses.
+            [System.IO.File]::Replace($temp, $PreferencesPath, [NullString]::Value)
+        } else {
+            [System.IO.File]::Move($temp, $PreferencesPath)
+        }
+    } catch {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        Write-Host "Could not save the answer in ${PreferencesPath}: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+}
+
+function Get-OptionNumber([string]$Explain) {
+    if ($Explain -ceq "on") { return "2" } else { return "1" }
+}
+
+function Read-Answer {
+    <# Ask until a usable answer, at most three times: off, on, or "" for option 1 for now. #>
+    Write-Host "One question before we start. You will only be asked once."
+    Write-Host ""
+    Write-Host "  1. Just run things for me in the browser workstation."
+    Write-Host "  2. Do that, AND show me the commands that should do the same thing directly"
+    Write-Host "     on my own system - no container involved."
+    Write-Host ""
+    Write-Host "Option 2 shows commands we think work on your system, each marked with how"
+    Write-Host "well it has been checked. It is not a promise."
+    Write-Host "You can change your answer at any time with: $ChooseCommand"
+    Write-Host ""
+    for ($try = 0; $try -lt 3; $try++) {
+        Write-Host -NoNewline "Choose 1 or 2 [1]: "
+        # Not Read-Host: it cannot tell the end of input (Ctrl-D) from a line.
+        $line = [Console]::In.ReadLine()
+        if ($null -eq $line) {
+            Write-Host ""
+            return ""
+        }
+        $answer = $line.Trim()
+        if ($answer -eq "" -or $answer -eq "1") { return "off" }
+        if ($answer -eq "2") { return "on" }
+        Write-Host """$answer"" is not 1 or 2."
+    }
+    return ""
+}
+
+function Invoke-AskAndSave {
+    $answer = Read-Answer
+    if (-not $answer) {
+        Write-Host "Using option 1 for now. Nothing was saved, so you will be asked again."
+        return
+    }
+    Save-Answer $answer
+    Write-Host "Saved: option $(Get-OptionNumber $answer). You can change it at any time with: $ChooseCommand"
+}
+
+# Before the student commands: ask only when EXPLAIN has not decided, nothing
+# is saved, and there is a terminal to ask on.
+function Invoke-AskOnce {
+    if (Get-ExplainOverride) { return }
+    if (Read-SavedAnswer) { return }
+    if (-not (Test-Terminal)) { return }
+    Invoke-AskAndSave
+}
+
+function Run-Choose {
+    [void](Get-ExplainOverride)
+    if (-not (Test-Terminal)) {
+        Write-Host "$ChooseCommand asks a question, so it needs a terminal. Nothing was changed." -ForegroundColor Red
+        exit 1
+    }
+    $saved = Read-SavedAnswer
+    if ($saved) {
+        Write-Host "Your current answer: option $(Get-OptionNumber $saved)."
+    } else {
+        Write-Host "Nothing is saved yet."
+    }
+    Write-Host ""
+    Invoke-AskAndSave
+}
+
 # --- commands ------------------------------------------------------------------
 
 function Run-Up {
@@ -641,6 +794,7 @@ function Show-Help {
         @{ Usage = "doctor";                                   About = "Check this machine can run the workstation";                Native = "docker info; docker compose version" }
         @{ Usage = "image";                                    About = "Build the image locally instead of pulling it";             Native = "docker compose build" }
         @{ Usage = "distros";                                  About = "List the ROS 2 distributions; pick one with ROS_DISTRO=name"; Native = "" }
+        @{ Usage = "choose";                                   About = "Change your answer to the question asked the first time"; Native = "" }
         @{ Usage = "engine";                                   About = "Show which compose command is used";                        Native = "docker compose version" }
         @{ Usage = "help";                                     About = "Show this help";                                            Native = "" }
         @{ Usage = "COMMAND help | COMMAND examples";          About = "More on shell, package, build, run, test";                  Native = "" }
@@ -717,6 +871,7 @@ $Dispatch = [ordered]@{
     "doctor"           = { Run-Doctor }
     "engine"           = { Run-Engine }
     "distros"          = { Show-Distros }
+    "choose"           = { Run-Choose }
     "help"             = { Show-Help }
     "examples"         = { Show-TopicHelp @("examples") }
 }
@@ -739,5 +894,9 @@ if ($Command -eq "help" -or $Command -eq "examples") {
     Show-TopicHelp (@($Command) + $HelpWords)
     exit 0
 }
+
+# The first-run question, before the student commands only, and never before
+# help: like the Makefile's first-run prerequisite.
+if ($AskOnceCommands -contains $Command) { Invoke-AskOnce }
 
 & $Dispatch[$Command]

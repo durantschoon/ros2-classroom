@@ -48,6 +48,19 @@ make up        # start the desktop
 make open      # open http://localhost:6080 (or just open it yourself)
 ```
 
+**One question, asked once.** The first time you run a target that does
+something (`make up`, `make shell`, `make build`, ...) in a terminal, it asks
+whether you want, besides having things run for you in the browser
+workstation, to see the commands that should do the same thing directly on
+your own system, with no container. Answer 1 for "just run things", 2 for
+"show me the native commands too". The answer is saved in
+`.workstation/preferences.json` in your checkout and never asked again;
+`make choose` (or `.\ros2.ps1 choose`) changes it, and `EXPLAIN=0` or
+`EXPLAIN=1` on one command (`make build EXPLAIN=1`) overrides it for that
+command. Without a terminal (scripts, CI) nothing is asked. On this branch
+option 2 does not print anything yet: the native commands arrive in later
+stages.
+
 `make engine` prints which container engine was detected, or explains what is
 missing if none was.
 

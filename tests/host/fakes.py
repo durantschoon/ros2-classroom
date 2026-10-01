@@ -439,3 +439,113 @@ def malformed_tables() -> Dict[str, str]:
         "no default": _table_with(_set_top("default", None)),
         "a default not in the table": _table_with(_set_top("default", "rolling")),
     }
+
+
+# --- a terminal for the scripts that ask a question --------------------------
+#
+# scripts/explain-choice asks only when stdin and stdout are both terminals,
+# so its tests need a real one: a pseudo-terminal whose slave end the child
+# gets as stdin (and, usually, stdout and stderr) and whose master end the
+# test reads and types into.  Two things learned the hard way:
+#
+# - Ctrl-C needs a controlling terminal.  A child started on a pty without
+#   one never turns \x03 into SIGINT and hangs.  So the child starts a new
+#   session and takes the pty as its controlling terminal before it runs.
+# - On macOS, reading the master returns b"" (EOF) slightly before the child
+#   has exited, where Linux raises EIO.  So after EOF the runner waits for the
+#   child with a timeout; it never polls once and calls a live child a hang.
+
+# Colour, and the cursor-key and keypad modes .NET switches on (pwsh).
+_TERMINAL_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[=>]")
+
+
+def _take_controlling_terminal() -> None:
+    """preexec_fn: a new session whose controlling terminal is stdin, the pty."""
+    import fcntl
+    import termios
+
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def run_on_pty(
+    argv: Sequence[str],
+    env: Dict[str, str],
+    cwd: Path,
+    keys: Sequence[bytes] = (),
+    prompt: Optional[str] = None,
+    stdout_on_pty: bool = True,
+    timeout: float = 60.0,
+) -> Run:
+    """Run argv with a pseudo-terminal as stdin and, by default, stdout and stderr.
+
+    ``keys`` are typed one at a time.  With ``prompt``, each waits until that
+    text has appeared once more on the terminal than the keys already typed,
+    so an answer is typed only when it is asked for; without it, all are typed
+    at once.  With ``stdout_on_pty=False``, stdout and stderr are pipes, as
+    when a terminal's output is captured; ``prompt`` is then never seen.
+
+    The terminal's output comes back as ``stdout``, with \\r\\n as \\n and the
+    escape sequences removed; with pipes, they come back as usual.
+    """
+    import pty
+    import select
+    import time
+
+    master, slave = pty.openpty()
+    out_target = slave if stdout_on_pty else subprocess.PIPE
+    proc = subprocess.Popen(
+        list(argv),
+        stdin=slave,
+        stdout=out_target,
+        stderr=out_target,
+        cwd=str(cwd),
+        env=env,
+        preexec_fn=_take_controlling_terminal,
+    )
+    os.close(slave)
+    marker = prompt.encode("utf-8") if prompt else b""
+    pending = list(keys)
+    typed = 0
+    screen = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            if pending and (not marker or screen.count(marker) > typed):
+                try:
+                    os.write(master, pending.pop(0))
+                except OSError:
+                    pending = []
+                typed += 1
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if not ready:
+                if proc.poll() is not None and not stdout_on_pty:
+                    break
+                continue
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:  # Linux: EIO once the child has closed the pty
+                break
+            if not chunk:  # macOS: EOF, possibly just before the child exits
+                break
+            screen += chunk
+        else:
+            proc.kill()
+            proc.wait()
+            raise AssertionError("{} did not finish within {}s; the terminal showed:\n{}".format(
+                argv[0], timeout, screen.decode("utf-8", errors="replace")))
+        out, err = proc.communicate(timeout=max(1.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise AssertionError("{} did not exit within {}s".format(argv[0], timeout))
+    finally:
+        os.close(master)
+    if stdout_on_pty:
+        text = screen.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        return Run(proc.returncode, _TERMINAL_ESCAPES.sub("", text), "")
+    return Run(
+        proc.returncode,
+        (out or b"").decode("utf-8", errors="replace"),
+        (err or b"").decode("utf-8", errors="replace"),
+    )

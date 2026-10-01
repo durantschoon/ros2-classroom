@@ -201,5 +201,61 @@ class DistrosRowTests(ScriptTestCase):
         self.assertTrue(start < image < distros < every, run.report())
         self.assertHas(run, "List the ROS 2 distributions; pick one with ROS_DISTRO=name")
 
+
+class ChooseRowTests(ScriptTestCase):
+    """make choose: the last line of "Start here", with help but no examples."""
+
+    script = "workstation-help"
+
+    def test_choose_is_the_last_line_of_start_here(self):
+        run = self.run_script()
+        self.assertStatus(run, 0)
+        lines = run.out_lines
+        start = next(i for i, line in enumerate(lines) if line.startswith("Start here"))
+        end = lines.index("", start)
+        self.assertEqual("Start here -- once per machine", lines[start], run.report())
+        self.assertTrue(lines[end - 1].startswith("  make choose "), run.report())
+        self.assertIn("Change your answer to the question asked the first time",
+                      lines[end - 1], run.report())
+
+    def test_first_run_is_not_listed(self):
+        run = self.run_script()
+        self.assertLacks(run, "first-run")
+
+    def test_choose_is_not_marked(self):
+        run = self.run_script()
+        self.assertFalse(any(line.startswith("* make choose") for line in run.out_lines),
+                         run.report())
+        bold = self.run_script(CLICOLOR_FORCE="1")
+        self.assertNotIn(BOLD + "make choose", bold.stdout, bold.report())
+
+    def test_choose_help_prints_the_topic(self):
+        for args in (("choose", "help"), ("help", "choose"), ("choose",)):
+            with self.subTest(args=args):
+                run = self.run_script(*args)
+                self.assertStatus(run, 0)
+                self.assertEqual("make choose -- change your answer to the first-run question",
+                                 run.out_lines[0], run.report())
+                for needed in (".workstation/preferences.json", "EXPLAIN=0", "EXPLAIN=1",
+                               "EXPLAIN=only", "Just run things for me"):
+                    self.assertHas(run, needed)
+
+    def test_choose_help_fits_a_terminal(self):
+        for line in self.run_script("choose", "help").out_lines:
+            with self.subTest(line=line):
+                self.assertLessEqual(len(line), 79)
+
+    def test_choose_has_no_examples_and_says_so(self):
+        run = self.run_script("choose", "examples")
+        self.assertStatus(run, 2)
+        self.assertEqual("", run.out, run.report())
+        self.assertHas(run, "No examples for: choose", where="stderr")
+        self.assertHas(run, "Nothing was run.", where="stderr")
+
+    def test_examples_alone_does_not_offer_choose(self):
+        run = self.run_script("examples")
+        self.assertLacks(run, "choose")
+
+
 if __name__ == "__main__":
     unittest.main()

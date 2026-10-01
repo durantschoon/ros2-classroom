@@ -17,3 +17,6 @@ __pycache__/
 
 # Logs from local job runners (tmux-run, launchd-run).
 logs/
+
+# The answer to the first-run question (scripts/explain-choice, ros2.ps1).
+.workstation/

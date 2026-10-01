@@ -86,7 +86,11 @@ first recipe a Windows student without WSL sees is therefore `wsl --install`.
 Design sketch:
 
 - A recipe per operation, with one variant per platform (Ubuntu/apt, Fedora/dnf,
-  macOS/brew + native ROS or RoboStack, Windows/WSL 2).
+  macOS/pixi and RoboStack, Windows/WSL 2). On macOS the commands use pixi,
+  not Homebrew or a bare conda: RoboStack publishes every distribution this
+  project supports for `osx-arm64` and `osx-64`, installed with
+  `pixi init <ws> --channel https://prefix.dev/robostack-<distro>` and
+  `pixi add ros-<distro>-desktop`.
 - Platform detection reuses `scripts/compose-command`'s approach.
 - Output clearly separates *what you would run natively* from *what we are
   running for you*.
@@ -111,6 +115,10 @@ Planned pipeline stages, to be authored after the Python port (stages 01-05)
 lands, since recipes are structured data and belong in Python:
 
 1. The first-run question, its saved answer, and the target that changes it.
+   **Done** on the integration branch `native-recipes` (pipeline stage 07):
+   `make choose`, `.\ros2.ps1 choose`, and the `EXPLAIN` override. Option 2
+   prints nothing until the recipes below exist, which is why it waits there
+   rather than on `main`.
 2. The recipe data model and platform detection (the Stage 4 decision points).
 3. Linux/apt recipes, verified for real in CI.
 4. macOS and WSL recipes, entering as `verified-by-hand` or
@@ -174,7 +182,7 @@ factors that actually change which command a student should run:
 | OS family + major version | `ubuntu-24.04`, `macos-15`, `windows-11` | Different package managers and ROS support |
 | Architecture | `amd64`, `arm64` | Apple Silicon package availability |
 | Environment | `native`, `wsl2`, `vm`, `ssh-only` | Display and device access differ |
-| Package manager | `apt`, `dnf`, `brew`, `conda` | Literally different commands |
+| Package manager | `apt`, `dnf`, `brew`, `conda`, `pixi` | Literally different commands |
 | Container engine | `docker`, `podman-3`, `podman-4`, `none` | The quirks already documented |
 | Display stack | `x11`, `wayland`, `wslg`, `headless` | GUI failures cluster here |
 | GPU vendor | `nvidia`, `amd`, `intel`, `none` | Driver and rendering paths |

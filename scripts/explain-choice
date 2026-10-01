@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Ask a student, once, whether to show the native commands too.
+
+    explain-choice --ask-once   what the student make targets run first
+    explain-choice --choose     what `make choose` runs: ask again
+    explain-choice --show       print off, on or only, for the later stages
+
+The answer is saved in .workstation/preferences.json at the repository root,
+found from this script's own location, never from the current directory.
+EXPLAIN=0, EXPLAIN=1 or EXPLAIN=only in the environment (make passes its
+command-line variables there) overrides it for one command.
+
+Without a terminal to ask on (CI, scripts, `make ... </dev/null`) nothing is
+asked, nothing blocks, and nothing is saved, so a student is asked the first
+time they do have a terminal.
+
+ros2.ps1 does the same for Windows without a host Python: the same file, the
+same JSON and the same messages.  Change one, change both.
+
+Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
+"""
+
+import json
+import os
+import sys
+import tempfile
+from enum import Enum
+from pathlib import Path
+from typing import NamedTuple, Optional, Sequence, TextIO, Union
+
+ROOT = Path(__file__).resolve().parent.parent
+PREFERENCES = ROOT / ".workstation" / "preferences.json"
+VERSION = 1
+CHOOSE_COMMAND = "make choose"
+PROMPT = "Choose 1 or 2 [1]: "
+TRIES = 3
+INTERRUPTED = 130  # 128 + SIGINT, what a shell reports for Ctrl-C
+
+
+class Mode(Enum):
+    """The three things this script does.  The set is closed."""
+
+    ASK_ONCE = "--ask-once"
+    CHOOSE = "--choose"
+    SHOW = "--show"
+
+
+class Explain(Enum):
+    """What later stages do with the native commands.  `only` is never saved:
+    it exists only as a one-command override."""
+
+    OFF = "off"
+    ON = "on"
+    ONLY = "only"
+
+
+SAVABLE = (Explain.OFF, Explain.ON)
+OPTION = {Explain.OFF: "1", Explain.ON: "2"}
+OVERRIDES = {"0": Explain.OFF, "1": Explain.ON, "only": Explain.ONLY}
+
+
+class BadOverride(NamedTuple):
+    """EXPLAIN was set to something other than 0, 1 or only."""
+
+    value: str
+
+
+class Unreadable(NamedTuple):
+    """A saved file that exists but does not hold an answer, and why."""
+
+    reason: str
+
+
+class Action(Enum):
+    """What --ask-once does, decided from (override, saved, terminal)."""
+
+    OVERRIDDEN = "overridden"  # EXPLAIN decides; exit quietly
+    SAVED = "saved"  # already answered; exit quietly
+    ASK = "ask"
+    NO_TERMINAL = "no-terminal"  # exit quietly, save nothing
+
+
+# --- pure core ------------------------------------------------------------------
+
+
+def parse_mode(argv: Sequence[str]) -> Optional[Mode]:
+    """Exactly one mode, or None (a usage error)."""
+    if len(argv) != 1:
+        return None
+    for mode in Mode:
+        if argv[0] == mode.value:
+            return mode
+    return None
+
+
+def parse_override(raw: Optional[str]) -> Union[None, Explain, BadOverride]:
+    """EXPLAIN's value: None when unset or empty, else an Explain or BadOverride."""
+    if not raw:
+        return None
+    return OVERRIDES.get(raw, BadOverride(raw))
+
+
+def parse_saved(text: str) -> Union[Explain, Unreadable]:
+    """The saved file's text: the answer it holds, or why it holds none."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return Unreadable("it is not JSON")
+    if not isinstance(data, dict):
+        return Unreadable('it is not an object with "version" and "explain"')
+    version = data.get("version")
+    # bool is an int in Python; true is not version 1.
+    if type(version) is not int or version != VERSION:
+        return Unreadable('its "version" is not {}'.format(VERSION))
+    if "explain" not in data:
+        return Unreadable('it has no "explain"')
+    for explain in SAVABLE:
+        if data["explain"] == explain.value:
+            return explain
+    return Unreadable('its "explain" is neither "off" nor "on"')
+
+
+def parse_answer(text: str) -> Optional[Explain]:
+    """One typed answer: 1 or Enter alone is off, 2 is on, anything else None."""
+    return {"": Explain.OFF, "1": Explain.OFF, "2": Explain.ON}.get(text.strip())
+
+
+def decide(override: Optional[Explain], saved: Optional[Explain], terminal: bool) -> Action:
+    if override is not None:
+        return Action.OVERRIDDEN
+    if saved is not None:
+        return Action.SAVED
+    if terminal:
+        return Action.ASK
+    return Action.NO_TERMINAL
+
+
+def render_question(choose_command: str) -> str:
+    return (
+        "One question before we start. You will only be asked once.\n"
+        "\n"
+        "  1. Just run things for me in the browser workstation.\n"
+        "  2. Do that, AND show me the commands that should do the same thing directly\n"
+        "     on my own system - no container involved.\n"
+        "\n"
+        "Option 2 shows commands we think work on your system, each marked with how\n"
+        "well it has been checked. It is not a promise.\n"
+        "You can change your answer at any time with: {}\n".format(choose_command)
+    )
+
+
+def render_saved(explain: Explain) -> str:
+    """The file's exact content: the same bytes ros2.ps1 writes."""
+    return json.dumps({"version": VERSION, "explain": explain.value}) + "\n"
+
+
+def render_confirmation(explain: Explain, choose_command: str) -> str:
+    return "Saved: option {}. You can change it at any time with: {}".format(
+        OPTION[explain], choose_command)
+
+
+def render_current(saved: Optional[Explain]) -> str:
+    if saved is None:
+        return "Nothing is saved yet."
+    return "Your current answer: option {}.".format(OPTION[saved])
+
+
+def render_unusable(text: str) -> str:
+    return '"{}" is not 1 or 2.'.format(text.strip())
+
+
+def render_unreadable(path: Path, problem: Unreadable) -> str:
+    return "{}: the saved answer could not be read: {}; treating it as not saved.".format(
+        path, problem.reason)
+
+
+def render_bad_override(problem: BadOverride) -> str:
+    return "EXPLAIN={} is not understood. Use EXPLAIN=0, EXPLAIN=1 or EXPLAIN=only.".format(
+        problem.value)
+
+
+USAGE = """\
+usage: explain-choice --ask-once | --choose | --show
+  --ask-once  ask the first-run question if it has never been answered
+  --choose    ask it again, showing the current answer
+  --show      print off, on or only"""
+
+FOR_NOW = "Using option 1 for now. Nothing was saved, so you will be asked again."
+NEEDS_TERMINAL = "{} asks a question, so it needs a terminal. Nothing was changed.".format(
+    CHOOSE_COMMAND)
+
+
+# --- imperative shell -------------------------------------------------------------
+
+
+def say(text: str, stream: TextIO = sys.stdout) -> None:
+    stream.write(text + "\n")
+    stream.flush()
+
+
+def read_saved(path: Path) -> Optional[Explain]:
+    """The saved answer, or None.  An unreadable file is said, never dropped."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError):
+        say(render_unreadable(path, Unreadable("it cannot be opened")), sys.stderr)
+        return None
+    parsed = parse_saved(text)
+    if isinstance(parsed, Unreadable):
+        say(render_unreadable(path, parsed), sys.stderr)
+        return None
+    return parsed
+
+
+def save(path: Path, explain: Explain) -> Optional[str]:
+    """Write the answer atomically.  None on success, else what went wrong."""
+    temp = None  # type: Optional[str]
+    try:
+        path.parent.mkdir(exist_ok=True)
+        handle, temp = tempfile.mkstemp(prefix=".preferences.", suffix=".tmp",
+                                        dir=str(path.parent))
+        with os.fdopen(handle, "wb") as out:
+            out.write(render_saved(explain).encode("utf-8"))
+        os.replace(temp, str(path))
+        temp = None
+        return None
+    except OSError as error:
+        return "Could not save the answer in {}: {}.".format(path, error.strerror or error)
+    finally:
+        if temp is not None:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+
+
+def has_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def ask() -> Optional[Explain]:
+    """Ask until a usable answer, at most TRIES times; None means option 1 for now."""
+    say(render_question(CHOOSE_COMMAND))
+    for _ in range(TRIES):
+        sys.stdout.write(PROMPT)
+        sys.stdout.flush()
+        line = sys.stdin.readline()
+        if not line:  # end of input, Ctrl-D
+            say("")
+            return None
+        answer = parse_answer(line)
+        if answer is not None:
+            return answer
+        say(render_unusable(line))
+    return None
+
+
+def ask_and_save() -> int:
+    answer = ask()
+    if answer is None:
+        say(FOR_NOW)
+        return 0
+    problem = save(PREFERENCES, answer)
+    if problem is not None:
+        say(problem, sys.stderr)
+        return 1
+    say(render_confirmation(answer, CHOOSE_COMMAND))
+    return 0
+
+
+def main(argv: Sequence[str]) -> int:
+    mode = parse_mode(argv)
+    if mode is None:
+        say(USAGE, sys.stderr)
+        return 2
+    override = parse_override(os.environ.get("EXPLAIN"))
+    if isinstance(override, BadOverride):
+        say(render_bad_override(override), sys.stderr)
+        return 2
+
+    if mode is Mode.SHOW:
+        if override is not None:
+            say(override.value)
+            return 0
+        saved = read_saved(PREFERENCES)
+        say((saved or Explain.OFF).value)
+        return 0
+
+    if mode is Mode.CHOOSE:
+        if not has_terminal():
+            say(NEEDS_TERMINAL, sys.stderr)
+            return 1
+        say(render_current(read_saved(PREFERENCES)))
+        say("")
+        return ask_and_save()
+
+    # Mode.ASK_ONCE.  The saved file is read only when EXPLAIN has not decided.
+    saved = None if override is not None else read_saved(PREFERENCES)
+    action = decide(override, saved, has_terminal())
+    if action is Action.ASK:
+        return ask_and_save()
+    return 0
+
+
+def run() -> int:
+    # Ctrl-C at the question: nothing saved, the make target stops, and no
+    # traceback.  A reader that closes the pipe early (`--show | head -0`) is
+    # not an error either.
+    try:
+        status = main(sys.argv[1:])
+        sys.stdout.flush()
+        return status
+    except KeyboardInterrupt:
+        try:
+            say("")
+        except OSError:
+            pass
+        return INTERRUPTED
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run())

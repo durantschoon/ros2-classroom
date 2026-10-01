@@ -413,8 +413,15 @@ class SharedTableTests(DistroTreeTestCase):
     refuse each one, in the same words."""
 
     def test_both_refuse_every_malformed_table_alike(self):
+        # Each refusal is "<the table's path>: <what is wrong>".  The two
+        # scripts may spell the path differently: scripts/distros resolves its
+        # own location, ros2.ps1 uses $PSScriptRoot as given, and where the
+        # temporary directory is behind a symlink (macOS: /tmp ->
+        # /private/tmp) those differ.  Both are right to name the file; the
+        # spelling of a symlinked path is not what this test guards.  So each
+        # path must name the table written here (os.path.samefile), and the
+        # words after it must be identical.
         table_path = self.tree / "distros.json"
-        prefix = "{}: ".format(table_path)
         for case, text in malformed_tables().items():
             with self.subTest(case=case):
                 table_path.write_text(text)
@@ -424,11 +431,194 @@ class SharedTableTests(DistroTreeTestCase):
                     env=self.sandbox.environ(), check=False, timeout=60)
                 script_err = proc.stderr.decode("utf-8", errors="replace").strip()
                 self.assertEqual(1, proc.returncode, script_err)
-                self.assertTrue(script_err.startswith(prefix), script_err)
+                self.assertEqual(1, len(script_err.splitlines()), script_err)
+                script_path, _, script_words = script_err.partition(": ")
+                self.assertTrue(os.path.samefile(script_path, str(table_path)), script_err)
                 run = self.run_copy("distros")
                 self.assertStatus(run, 1)
-                self.assertEqual([script_err], run.out_lines, run.report())
+                self.assertEqual(1, len(run.out_lines), run.report())
+                ps1_path, _, ps1_words = run.out_lines[0].partition(": ")
+                self.assertTrue(os.path.samefile(ps1_path, str(table_path)), run.report())
+                self.assertEqual(script_words, ps1_words, run.report())
                 self.assertFalse(self.sandbox.called("docker"), run.report())
+
+
+# --- the first-run question: the same contract as scripts/explain-choice ---------
+
+from fakes import SCRIPTS, run_on_pty  # noqa: E402  (kept beside the tests that use it)
+
+FIRST_RUN_PROMPT = "Choose 1 or 2 [1]: "
+FIRST_RUN_QUESTION = """\
+One question before we start. You will only be asked once.
+
+  1. Just run things for me in the browser workstation.
+  2. Do that, AND show me the commands that should do the same thing directly
+     on my own system - no container involved.
+
+Option 2 shows commands we think work on your system, each marked with how
+well it has been checked. It is not a promise.
+You can change your answer at any time with: .\\ros2.ps1 choose
+"""
+FIRST_LINE = "One question before we start."
+SAVED_ON = '{"version": 1, "explain": "on"}\n'
+SAVED_OFF = '{"version": 1, "explain": "off"}\n'
+UP_ARGV = [["info"], ["compose", "pull", "--ignore-pull-failures"], ["compose", "up", "-d"]]
+UNREADABLE = ": the saved answer could not be read: "
+CORRUPT_FILES = {
+    "not JSON": "explain = on\n",
+    "no explain key": '{"version": 1}\n',
+    "only, which is never saved": '{"version": 1, "explain": "only"}\n',
+    "an unknown version": '{"version": 2, "explain": "on"}\n',
+}
+
+
+class FirstRunTests(Ros2Ps1TestCase):
+    """A temporary copy of ros2.ps1, distros.json and scripts/explain-choice,
+    so .workstation/ is created beside the copy, never in the repository."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tree = self.sandbox.root / "tree"
+        (self.tree / "scripts").mkdir(parents=True)
+        shutil.copy2(str(REPO / "ros2.ps1"), str(self.tree / "ros2.ps1"))
+        shutil.copy2(str(REPO / "distros.json"), str(self.tree / "distros.json"))
+        shutil.copy2(str(SCRIPTS / "explain-choice"), str(self.tree / "scripts" / "explain-choice"))
+        self.saved = self.tree / ".workstation" / "preferences.json"
+
+    def env(self, **overrides: str) -> Dict[str, str]:
+        return self.sandbox.environ(
+            POWERSHELL_TELEMETRY_OPTOUT="1",
+            POWERSHELL_UPDATECHECK="Off",
+            DOTNET_CLI_TELEMETRY_OPTOUT="1",
+            **overrides
+        )
+
+    def ps1_on_pty(self, *args: str, keys: List[bytes] = (), stdout_on_pty: bool = True,
+                   **overrides: str) -> Run:
+        # No -NonInteractive: a student's PowerShell may ask.
+        return run_on_pty([str(PWSH), "-NoProfile", "-File", str(self.tree / "ros2.ps1")]
+                          + list(args), env=self.env(**overrides), cwd=self.sandbox.root,
+                          keys=keys, prompt=FIRST_RUN_PROMPT if stdout_on_pty else None,
+                          stdout_on_pty=stdout_on_pty, timeout=120)
+
+    def ps1_piped(self, *args: str) -> Run:
+        proc = subprocess.run(
+            [str(PWSH), "-NoProfile", "-NonInteractive", "-File", str(self.tree / "ros2.ps1")]
+            + list(args),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+            cwd=str(self.sandbox.root), env=self.env(), check=False, timeout=120)
+        return Run(proc.returncode, strip_ansi(proc.stdout.decode("utf-8", errors="replace")),
+                   strip_ansi(proc.stderr.decode("utf-8", errors="replace")))
+
+    def explain_choice(self, *args: str, keys: List[bytes] = ()) -> Run:
+        """The copy of scripts/explain-choice, on a pty when keys are given."""
+        argv = [str(self.tree / "scripts" / "explain-choice")] + list(args)
+        if keys:
+            return run_on_pty(argv, env=self.sandbox.environ(), cwd=self.sandbox.root,
+                              keys=keys, prompt=FIRST_RUN_PROMPT)
+        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              stdin=subprocess.DEVNULL, cwd=str(self.sandbox.root),
+                              env=self.sandbox.environ(), check=False, timeout=60)
+        return Run(proc.returncode, proc.stdout.decode("utf-8", errors="replace"),
+                   proc.stderr.decode("utf-8", errors="replace"))
+
+    def save(self, text: str) -> None:
+        self.saved.parent.mkdir(exist_ok=True)
+        self.saved.write_text(text)
+
+    def assertNothingSaved(self, run: Run) -> None:
+        self.assertFalse((self.tree / ".workstation").exists(), run.report())
+
+    # 19
+    def test_choose_on_a_pty_saves_what_explain_choice_saves(self):
+        run = self.ps1_on_pty("choose", keys=[b"2\n"])
+        self.assertStatus(run, 0)
+        self.assertIn("Nothing is saved yet.", run.out, run.report())
+        self.assertIn(FIRST_RUN_QUESTION + "\n" + FIRST_RUN_PROMPT, run.out, run.report())
+        self.assertIn("Saved: option 2. You can change it at any time with: .\\ros2.ps1 choose",
+                      run.out, run.report())
+        self.assertEqual(SAVED_ON.encode("utf-8"), self.saved.read_bytes(), run.report())
+        self.assertEqual(["preferences.json"], [p.name for p in self.saved.parent.iterdir()])
+        # ros2.ps1 wrote it; explain-choice reads it.
+        self.assertEqual("on\n", self.explain_choice("--show").stdout)
+
+    def test_a_file_explain_choice_wrote_is_read_by_ros2_ps1(self):
+        written = self.explain_choice("--choose", keys=[b"1\n"])
+        self.assertEqual(SAVED_OFF, self.saved.read_text(), written.report())
+        run = self.ps1_on_pty("choose", keys=[b"2\n"])
+        self.assertStatus(run, 0)
+        self.assertEqual("Your current answer: option 1.", run.out_lines[0], run.report())
+        self.assertEqual(SAVED_ON, self.saved.read_text(), run.report())
+        # And `up` on a terminal, with an answer saved, does not ask.
+        again = self.ps1_on_pty("up", keys=[b"1\n"])
+        self.assertStatus(again, 0)
+        self.assertNotIn(FIRST_LINE, again.out, again.report())
+        self.assertEqual(SAVED_ON, self.saved.read_text(), again.report())
+
+    def test_desktop_asks_once_before_it_starts_anything(self):
+        # docker info fails, so desktop stops in its first step, up: after the
+        # question, before open would wait for a desktop.
+        self.sandbox.fake("docker", rules=[rule(["info"], exit_code=1)])
+        run = self.ps1_on_pty("desktop", keys=[b"2\n"])
+        self.assertEqual(1, run.out.count(FIRST_LINE), run.report())
+        self.assertEqual(SAVED_ON, self.saved.read_text(), run.report())
+        self.assertLess(run.out.index(FIRST_LINE),
+                        run.out.index("the Docker engine is not running"), run.report())
+
+    # 20
+    def test_up_without_a_terminal_asks_nothing_and_runs_as_before(self):
+        run = self.ps1_piped("up")
+        self.assertStatus(run, 0)
+        self.assertNotIn(FIRST_LINE, run.out + run.err, run.report())
+        self.assertNothingSaved(run)
+        self.assertEqual(UP_ARGV, self.sandbox.argv("docker"))
+
+    def test_a_terminal_for_input_but_captured_output_is_no_terminal(self):
+        # An answer is typed anyway, so a script that asked would save it.
+        run = self.ps1_on_pty("up", keys=[b"2\n"], stdout_on_pty=False)
+        self.assertStatus(run, 0)
+        self.assertNotIn(FIRST_LINE, run.out + run.err, run.report())
+        self.assertNothingSaved(run)
+        self.assertEqual(UP_ARGV, self.sandbox.argv("docker"))
+
+    # 21
+    def test_explain_on_the_command_line_or_in_the_environment_means_no_question(self):
+        for args, overrides in ((("up", "EXPLAIN=1"), {}), (("up",), {"EXPLAIN": "1"})):
+            with self.subTest(args=args, env=overrides):
+                run = self.ps1_on_pty(*args, keys=[b"2\n"], **overrides)
+                self.assertStatus(run, 0)
+                self.assertNotIn(FIRST_LINE, run.out, run.report())
+                self.assertNothingSaved(run)
+                self.assertEqual(UP_ARGV, self.sandbox.argv("docker")[-3:])
+
+    # 22
+    def test_a_corrupt_file_is_said_in_explain_choices_words_and_asked_again(self):
+        for case, text in CORRUPT_FILES.items():
+            with self.subTest(case=case):
+                self.save(text)
+                expected = self.explain_choice("--show")
+                self.assertEqual("off\n", expected.stdout, expected.report())
+                expected_path, _, expected_words = expected.err.strip().partition(UNREADABLE)
+                run = self.ps1_on_pty("up", keys=[b"2\n"])
+                self.assertStatus(run, 0)
+                said = [line for line in run.out_lines if UNREADABLE in line]
+                self.assertEqual(1, len(said), run.report())
+                path, _, words = said[0].partition(UNREADABLE)
+                self.assertTrue(os.path.samefile(path, str(self.saved)), run.report())
+                self.assertTrue(os.path.samefile(expected_path, str(self.saved)), expected.report())
+                self.assertEqual(expected_words, words, run.report())
+                self.assertIn(FIRST_RUN_QUESTION, run.out, run.report())
+                self.assertEqual(SAVED_ON, self.saved.read_text(), run.report())
+
+    def test_a_corrupt_file_without_a_terminal_is_said_and_left_alone(self):
+        text = CORRUPT_FILES["not JSON"]
+        self.save(text)
+        run = self.ps1_piped("up")
+        self.assertStatus(run, 0)
+        self.assertEqual(1, sum(UNREADABLE in line for line in run.out_lines), run.report())
+        self.assertNotIn(FIRST_LINE, run.out, run.report())
+        self.assertEqual(text, self.saved.read_text(), run.report())
+        self.assertEqual(UP_ARGV, self.sandbox.argv("docker"))
 
 
 if __name__ == "__main__":
