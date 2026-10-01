@@ -196,6 +196,18 @@ the pipeline, recorded so it does not happen again:
 - A retro every 5 stages (before authoring stage 05, 10, …), plus whenever the
   user asks.
 
+### Added 2026-10-01, after stage 07's first attempt blocked
+
+- **Baseline with every optional tool the stage will use.** Stage 07's prompt
+  quoted a `make check` baseline taken without `pwsh`, while requiring the
+  executor to run with it; 13 failures were hidden in skipped tests, and the
+  executor blocked, correctly. A prompt's baseline is measured under the
+  exact gate command its Definition of Done names, skips included.
+- **A blocked attempt's commit** has the subject
+  `docs(stages): stage NN report -- BLOCKED`, not the feature's subject. A
+  retry runs on a new branch, `stage-NN-<name>-r2`; the blocked branch stays
+  as the record.
+
 ### Added by the retro before stage 05
 
 Patterns across the reports of stages 01-04, and the rule each one became:

@@ -1,6 +1,14 @@
 # Stage 07 — The first-run question
 
-Branch name for this stage: `stage-07-first-run-question`. Base: `native-recipes`.
+Branch name for this stage: `stage-07-first-run-question-r2`. Base: `native-recipes`.
+
+**Attempt 2.** Attempt 1 (`f4662ad`, branch `stage-07-first-run-question`)
+blocked cleanly at its baseline: with PowerShell present, 13 more failures
+than this prompt exempted, in `tests/host/test_ros2_ps1.py`. The coordinator
+measured the baseline without `pwsh`, so they were skipped; that was the
+coordinator's error, not the executor's. Revised below: item 0 is new, the
+exemption, Verification 2, the `ros2.ps1` question text, and `desktop` are
+corrected. Leave attempt 1's branch alone; link its report from yours.
 
 Re-authored 2026-10-01. The first version of this prompt (`6127cee`, on
 `native-commands`) was written for the pre-v1.0 history and a WSL host and was
@@ -61,15 +69,38 @@ prompt, as the retro requires:
   `ros2.ps1 <target> help` says "Unknown command". So a `make choose` listed in
   `make help` must exist in `ros2.ps1` too. Those tests skip without
   PowerShell 7; this host has none installed (see Tests).
-- **Baseline at `ffdd4ec`:** `python3 -m unittest discover -s tests/host` ran
-  288 tests in 71 s, 29 skipped, **27 failures, all in
-  `tests/host/test_distros.py`**: a `/tmp` -> `/private/tmp` symlink this
-  host has and Linux CI has not. Stage 13 fixes them on `multi-distro`, in
-  parallel with you. They are expected in your baseline and final runs, and
-  you must not fix them (not in your allowed files). Re-measure; do not copy
-  these numbers.
+- **Baseline at `1cdff5f`, with PowerShell** (attempt 1, confirmed by the
+  coordinator): `PWSH=… make check` ran 288 tests in about 173 s, 0 skipped,
+  **40 failures**, all from a `/tmp` -> `/private/tmp` symlink this host has
+  and Linux CI has not:
+  - **27 in `tests/host/test_distros.py`.** Stage 13 fixes them on
+    `multi-distro`, in parallel with you. They are expected in your baseline
+    and final runs; you must not fix them (not in your allowed files).
+  - **13 subtests of `SharedTableTests.test_both_refuse_every_malformed_table_alike`
+    in `tests/host/test_ros2_ps1.py`.** Yours to fix, item 0.
+  Re-measure; do not copy these numbers.
 
 ## The change
+
+### 0. `test_both_refuse_every_malformed_table_alike` on macOS (attempt 2)
+
+The test asserts that `scripts/distros` and `ros2.ps1` refuse each malformed
+table in the same words. On this host they name the table differently:
+`scripts/distros` the resolved path (`/private/tmp/…`, from
+`Path(__file__).resolve()`), `ros2.ps1` the unresolved one (`/tmp/…`, from
+`$PSScriptRoot`). Resolving the test's expected path is **not** enough; the
+coordinator tried it, and the second assertion (the two outputs equal) still
+failed 13 times. Both scripts are right to name the file; the spelling of a
+symlinked path is not what the test guards.
+
+Change the test, not the scripts: split each output at its first `": "`;
+assert with `os.path.samefile` that each script's path names the table the
+test wrote; assert the words after the path are equal; keep the status and
+one-line checks. The coordinator's trial of exactly this passed 29/29 with
+`pwsh`, and a negative control (changing `65535` to `65536` in `ros2.ps1`'s
+port message) failed 7 subtests. Repeat both (the negative control by
+copy-out and copy-back with a checksum) and report them. Add a comment in the
+test saying why.
 
 ### 1. `scripts/explain-choice` (new)
 
@@ -173,7 +204,9 @@ architect has decided these three, and **only** these three.
 - `choose` gets a `help` topic (changed 2026-10-01: `make choose help` must
   not refuse): the question in one sentence, the two answers, where the answer
   is saved, and that `EXPLAIN=0`, `EXPLAIN=1` or `EXPLAIN=only` overrides it for
-  one command. No `examples` topic.
+  one command. No `examples` topic. The overview marks (`*` or bold) only
+  targets with help **and** examples, so `choose`'s row stays unmarked, and
+  the existing test that pins the marked rows stays as it is.
 
 ### 4. `ros2.ps1`
 
@@ -182,9 +215,14 @@ The same contract for a student on Windows without `make` or a host Python
 
 - A `choose` command, listed by `.\ros2.ps1 help` in the same place `make help`
   lists it, accepting `choose help` like every command.
-- The same ask-once before exactly the same student commands as item 2.
+- The same ask-once before exactly the same student commands as item 2, and
+  before `desktop`, `ros2.ps1`'s default command (`up` then `open`), which is
+  what most Windows students run (attempt 1, Open question 3). Asked once,
+  not once for `up` and again for `open`.
 - The same file, `.workstation/preferences.json` next to `ros2.ps1`, the same
-  JSON, written atomically; the same question text word for word; the same
+  JSON, written atomically; the same question text word for word **except**
+  that wherever `scripts/explain-choice` says `make choose`, `ros2.ps1` says
+  `.\ros2.ps1 choose` (attempt 1, Open question 2); the same
   answers, retries, Ctrl-D and corrupt-file behaviour; `EXPLAIN` from the
   environment or as `EXPLAIN=…` on the command line (the existing
   "assignments become environment variables" path) wins over the saved answer.
@@ -240,7 +278,8 @@ The same contract for a student on Windows without `make` or a host Python
 - `docs/roadmap.md`
 - `tests/host/test_explain_choice.py` (new)
 - `tests/host/test_workstation_help.py` — additions only
-- `tests/host/test_ros2_ps1.py` — additions only
+- `tests/host/test_ros2_ps1.py` — additions, plus item 0's change to
+  `test_both_refuse_every_malformed_table_alike` only
 - `tests/host/fakes.py` — additive, API-preserving
 - `tests/host/README.md`
 - `docs/stages/stage-07-REPORT.md` (new)
@@ -321,8 +360,11 @@ Run each and paste the output into the report.
 2. **A real terminal session, by hand**, using BSD `script` to provide the
    terminal: in a scratch copy of the repository (not your worktree, so
    nothing is saved there), `script -q /dev/null make choose`, answer 2, then
-   `./scripts/explain-choice --show`. Paste the transcript. The same for
-   `pwsh ./ros2.ps1 choose`.
+   `./scripts/explain-choice --show`. Paste the transcript. For
+   `ros2.ps1 choose`: this sandbox refuses `pwsh` as a plain shell command
+   (attempt 1, Open question 1) but allows Python to start it, so drive it
+   through the tests' pty runner from a short Python script, and paste that
+   transcript instead.
 3. **Nothing changed for the unasked.** For `help`, `engine`, `doctor` and
    `distros`, and for `make -n` of `up`, `shell`, `turtlesim`,
    `package PKG=x`, `build`, `run PKG=x NODE=y`, and `test`, all with stdin
@@ -344,12 +386,14 @@ Run each and paste the output into the report.
 - Final: `make lint` passes, with `scripts/explain-choice` classified
   `python, host (3.9 grammar)`.
 - Final: `PWSH=… make check` passes apart from the same 27
-  `test_distros` failures, and no `test_ros2_ps1` test skips. Report the new
+  `test_distros` failures (item 0 having fixed the other 13), and no
+  `test_ros2_ps1` test skips. Report the new
   count. **Budget:** `python3 -m unittest discover -s tests/host -p
   'test_explain_choice.py'` under 5 seconds; `make check` as a whole no more
   than 10 seconds slower than your baseline.
 - Final: the isolated `make selftest` passes every check, once, at the end.
-- Tests 1–22 present; the eight mutations caught; Verification 1–5 pass.
+- Item 0: the 13 subtests pass and its negative control fails them. Tests
+  1–22 present; the eight mutations caught; Verification 1–5 pass.
 - `grep -n "shell=True\|os.system" scripts/explain-choice` finds nothing.
 - `git diff native-recipes --stat` shows only allowed files.
 
@@ -368,7 +412,7 @@ Stage files by path; never `git add -A`. Do not amend the commit to perfect
 the report: where the report quotes its own commit's stat, quote the stat of
 the change **excluding the report file**, which is exact before you commit:
 `git diff native-recipes --stat -- . ':!docs/stages/stage-07-REPORT.md'`.
-Then `git push -u origin stage-07-first-run-question`. Never push to
+Then `git push -u origin stage-07-first-run-question-r2`. Never push to
 `native-recipes`, `multi-distro` or `main`.
 
 ## Report requirements
@@ -394,7 +438,7 @@ STOP and commit only the report, with a BLOCKED section giving the exact
 failing output and why each permitted path is closed, if:
 
 - a gate fails on the unmodified base other than the 27 known `test_distros`
-  failures;
+  failures and the 13 item 0 fixes;
 - the question cannot be asked from a make prerequisite without changing what
   an unasked student sees;
 - the tests cannot avoid writing inside the repository without a new
