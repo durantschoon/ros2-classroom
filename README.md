@@ -19,6 +19,8 @@ installed, preferring Docker. Run `make doctor` to check your host, and see
 [docs/host-requirements.md](docs/host-requirements.md) — with older Podman you
 also need `pip install --user -r requirements-host.txt`.
 
+BONUS [Quick Windows 11 demo](https://youtu.be/WTptQiFGC_U?is=rO5F2N-HPfEX4Vi2)
+
 > **On Windows, read `make` as `.\ros2.ps1`.** Every `make TARGET` in this
 > README and in `docs/` works in PowerShell as `.\ros2.ps1 TARGET` (or
 > `.\ros2.bat TARGET`), with the same arguments:
