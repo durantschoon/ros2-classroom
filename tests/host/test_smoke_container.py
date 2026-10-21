@@ -27,7 +27,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
@@ -44,18 +43,10 @@ CONTAINER_PORT = "6080"
 DOMAIN = "99"
 STUDENT_DOMAIN = "42"
 
-# The real tools the suite reaches for on the host.  Found by running it under an
-# almost-empty PATH and reading the "command not found" lines, not by reading the
-# script.  `python3` is linked by Sandbox itself, for the fakes' own shebang.
+# The Python suite drives the real Makefile, whose recipes need bash.
+# Sandbox links python3 for the suite and fake executables automatically.
 REAL_TOOLS = (
-    "bash",  # the suite's own interpreter, via /usr/bin/env
-    "dirname",  # cd "$(dirname "$0")/.."
-    "seq",  # the readiness loop
-    "grep",  # every output assertion the suite makes
-    "tail",  # truncating captured output
-    "head",  # the Xvfb user probe
-    "tr",  # the Xvfb user probe, and tutorial list's error text
-    "awk",  # the md5sum probes
+    "bash",  # used by the Makefile's command recipes
     "make",  # the "student make targets" step runs the real Makefile
 )
 
@@ -65,13 +56,9 @@ RECORDED = ("ROS_DOMAIN_ID", "NOVNC_PORT", "COMPOSE")
 
 MISSING_TOOLS = [name for name in REAL_TOOLS if shutil.which(name) is None]
 NEEDS_TOOLS = (
-    "scripts/smoke-container is bash and drives the real Makefile; this machine "
+    "scripts/smoke-container drives the real Makefile; this machine "
     "is missing {}".format(", ".join(MISSING_TOOLS) or "nothing")
 )
-
-# Two of the suite's redirections land in the HOST's /tmp.  Recorded at import so
-# a test can tell files this session wrote from ones left by an earlier run.
-SESSION_START = time.time()
 
 
 def git_status() -> Optional[str]:
