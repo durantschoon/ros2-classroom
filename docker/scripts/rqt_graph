@@ -1,2 +1,18 @@
-#!/bin/bash
-exec ros2 run rqt_graph rqt_graph "$@"
+#!/usr/bin/env python3
+"""Hand over to the ROS rqt_graph executable, forwarding every argument."""
+
+import os
+import sys
+
+
+def main() -> int:
+    try:
+        os.execvp("ros2", ["ros2", "run", "rqt_graph", "rqt_graph"] + sys.argv[1:])
+    except OSError as error:
+        print("rqt_graph: cannot execute ros2: {}".format(error.strerror), file=sys.stderr)
+        return 127 if isinstance(error, FileNotFoundError) else 126
+    return 0  # unreachable: execvp replaces this process
+
+
+if __name__ == "__main__":
+    sys.exit(main())
