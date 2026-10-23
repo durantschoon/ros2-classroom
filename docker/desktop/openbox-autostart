@@ -12,5 +12,5 @@ xsetroot -solid '#2e3440' 2>/dev/null || true
 xterm -title 'ROS 2 tutorial shell' \
       -geometry 100x28+40+40 \
       -fa 'DejaVu Sans Mono' -fs 11 \
-      -bg black -fg white \
-      -e bash -lc 'cat /usr/share/ros-workstation/welcome.txt; exec bash -l' &
+      -bg '#2e3440' -fg '#eceff4' \
+      -e bash -lc 'cat /usr/share/ros-workstation/welcome.txt; exec bash --rcfile /usr/share/ros-workstation/bashrc -i' &

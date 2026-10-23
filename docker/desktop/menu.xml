@@ -3,7 +3,7 @@
   <menu id="root-menu" label="ROS 2">
     <item label="Terminal">
       <action name="Execute">
-        <command>xterm -fa 'DejaVu Sans Mono' -fs 11 -bg black -fg white -e bash -lc 'cat /usr/share/ros-workstation/welcome.txt; exec bash -l'</command>
+        <command>xterm -fa 'DejaVu Sans Mono' -fs 11 -bg '#2e3440' -fg '#eceff4' -e bash -lc 'cat /usr/share/ros-workstation/welcome.txt; exec bash --rcfile /usr/share/ros-workstation/bashrc -i'</command>
       </action>
     </item>
     <separator label="Turtlesim"/>

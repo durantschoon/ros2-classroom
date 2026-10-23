@@ -1,0 +1,13 @@
+# The noVNC terminal uses this after its login shell has loaded the ROS setup.
+# Keep the system and student's Bash settings, then set the desktop prompt last.
+if [ -f /etc/bash.bashrc ]; then
+    . /etc/bash.bashrc
+fi
+if [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+
+# Mark color escapes as nonprinting so long commands wrap at the right column.
+if [ -t 1 ] && [ "${TERM:-}" != dumb ]; then
+    PS1='\[\e[1;36m\]\u@\h\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\] \[\e[1;32m\]\$\[\e[0m\] '
+fi
