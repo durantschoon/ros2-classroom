@@ -9,7 +9,20 @@ SHELL := /bin/sh
 # Container engine.  Docker is preferred when present; rootless Podman is a
 # supported fallback.  Override either from the command line, e.g.
 #   make up COMPOSE='podman-compose'
-DETECTED := $(shell ./scripts/compose-command --make 2>/dev/null)
+DETECTED = $(shell ./scripts/compose-command --make 2>/dev/null)
+# Overrides that refuse operations must not even probe the engine.
+ifneq ($(origin EXPLAIN),undefined)
+ifneq (x$(EXPLAIN)x,x0x)
+ifneq (x$(EXPLAIN)x,x1x)
+DETECTED =
+endif
+endif
+export EXPLAIN
+endif
+# Help and changing the preference need no engine, including in dry runs.
+ifneq ($(filter help examples choose,$(MAKECMDGOALS)),)
+DETECTED =
+endif
 ENGINE ?= $(firstword $(DETECTED))
 COMPOSE ?= $(wordlist 2,99,$(DETECTED))
 
@@ -60,7 +73,7 @@ else
 
 .PHONY: help examples engine doctor require-engine require-desktop image up open shell turtlesim \
 	turtlesim-teleop teleop \
-	package build run test logs ps down reset uninstall selftest check lint digest
+	package build run test logs ps down reset uninstall selftest check lint digest choose preference-check
 
 # All help text lives in scripts/workstation-help, which prints targets that
 # have their own `help` and `examples` in bold on a terminal, or marked with
@@ -72,10 +85,10 @@ help:
 examples:
 	@./scripts/workstation-help examples
 
-engine:
+engine: preference-check
 	@./scripts/compose-command --explain
 
-doctor:
+doctor: preference-check
 	@./scripts/check-host
 
 # Targets that exec into the desktop need it running; say so plainly rather than
@@ -86,7 +99,18 @@ require-desktop: require-engine
 
 # Every target that talks to containers depends on this, so a missing engine
 # produces an explanation instead of an empty command line.
-require-engine:
+# One shared prerequisite orders the question before all workflow effects,
+# even with make -j and several student goals. Dry runs only print these lines.
+preference-check:
+	@./scripts/explain-choice --guard
+ifneq ($(filter up open shell turtlesim turtlesim-teleop package build run test,$(MAKECMDGOALS)),)
+	@./scripts/explain-choice --ask-once
+endif
+
+choose:
+	@./scripts/explain-choice --choose
+
+require-engine: preference-check
 	@./scripts/compose-command >/dev/null 2>&1 \
 	    || { ./scripts/compose-command --explain; exit 1; }
 
@@ -106,7 +130,7 @@ up: require-engine
 # Waits for noVNC first: straight after `make up` the desktop is still starting,
 # and opening early shows "failed to connect".  The instructions come after the
 # browser opens, because only then is there anything to right-click.
-open:
+open: preference-check
 	@if command -v curl >/dev/null 2>&1; then \
 	    i=0; until curl -fsS -o /dev/null --max-time 2 '$(URL)/vnc.html' 2>/dev/null; do \
 	        i=$$((i + 1)); \
@@ -185,7 +209,7 @@ turtlesim-teleop: require-engine
 
 # The old name, kept only to point at the new one rather than failing with
 # make's "No rule to make target".
-teleop:
+teleop: preference-check
 	@echo '`make teleop` is now `make turtlesim-teleop` -- it only drives turtlesim.'
 	@exit 2
 
@@ -253,7 +277,7 @@ uninstall: require-engine
 # exercises every documented workflow, then removes its containers and volumes.
 # It runs as a separate compose project on port 6081, so those are its OWN
 # volumes -- safe to run while a student's desktop is up, with work in it.
-selftest:
+selftest: preference-check
 	./scripts/smoke-container
 
 # Black-box tests for the host scripts: each one runs as a subprocess against
@@ -268,7 +292,7 @@ lint: require-engine
 
 # Prints the multi-arch index digest for the configured distribution, for
 # pasting into .env / compose.yaml as ROS_BASE_DIGEST.
-digest:
+digest: preference-check
 	@if [ "$(ENGINE)" = 'docker' ] && docker buildx version >/dev/null 2>&1; then \
 	    docker buildx imagetools inspect docker.io/library/ros:$(ROS_DISTRO)-ros-base \
 	        | awk '/^Digest:/ {print $$2; found=1} END {if (!found) exit 1}'; \

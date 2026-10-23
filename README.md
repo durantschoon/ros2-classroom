@@ -162,6 +162,17 @@ Changing `ROS_DISTRO` also requires the matching base digest
 (`make digest ROS_DISTRO=<name>`), and only distributions covered by CI are
 supported.
 
+## Native explanation preferences
+
+Native explanation preferences are shared by Make and PowerShell in the local,
+ignored `.workstation/preferences.json`. The first interactive student command
+asks whether to save off or on; `make choose` (Windows: `.\ros2.ps1 choose`)
+asks again. Both input and output must be terminals. Scripts and CI default to
+off without saving a choice. `EXPLAIN=0` or `EXPLAIN=1` overrides the saved
+choice for one command. This version saves the preference while native recipes
+are being added; `EXPLAIN=only` refuses operations without running them because
+recipes are unavailable. It never starts a container or opens a browser.
+
 ## Documentation
 
 - [Host requirements and how to check them](docs/host-requirements.md)

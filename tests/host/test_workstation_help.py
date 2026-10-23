@@ -36,6 +36,12 @@ class OverviewTests(ScriptTestCase):
                        "uninstall"):
             self.assertHas(run, "make " + target)
 
+    def test_choose_is_listed_without_invoking_a_question(self):
+        run = self.run_script()
+        self.assertStatus(run, 0)
+        self.assertHas(run, "make choose")
+        self.assertLacks(run, "Choose 1 or 2")
+
     def test_the_url_and_the_compose_command_are_the_ones_passed_in(self):
         run = self.run_script("--url", "http://localhost:7000", "--compose", "podman-compose")
         self.assertHas(run, "http://localhost:7000")
