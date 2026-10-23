@@ -25,6 +25,62 @@ container. The claim we are making to them is:
 That turns each target into a small lesson instead of a magic word, and it
 means a student can graduate off this repo onto a real native install.
 
+## TODO: Bazel and editable node scaffolding
+
+**Status: planned; implementation has not started.** Feature branch:
+`feature/bazel-node-templates`. Keep this checklist visible on `main` as well
+as the feature branch so parallel work can account for the intended direction.
+The existing colcon/ament workflow remains the current implementation until
+the replacement is verified.
+
+Use editable Jinja2 scaffolding for ordinary Python and C++ ROS nodes.
+Students own the resulting source and build files and can continue without
+the generator. A persistent YAML specification that owns generated ROS wiring
+is an alternative, not the initial design: the teaching goal is for students
+to perform the same edits independently.
+
+- [ ] Prove Bazel compatibility with the container's ROS 2 Lyrical installation
+  before migrating the workflow. Initially evaluate importing the installed
+  ROS stack with Drake's `bazel_ros2_rules`; pin and verify the chosen rules
+  and Bazel version. Building ROS itself from source is a separate decision.
+- [ ] Build and run one Python node, one C++ node, and a custom action with
+  Bazel. Verify actual DDS communication, action feedback/cancellation/results,
+  custom interface discovery, `ros2 pkg executables`, `ros2 run`, and ordinary
+  ROS launch files. Implement executable/resource registration as needed;
+  importing ROS libraries alone does not establish these runtime contracts.
+- [ ] Replace student-package CMake wiring with Bazel targets, including
+  custom `.msg`, `.srv`, and `.action` bindings for both languages. Retain
+  `package.xml` as ROS metadata. Do not assume CMake can be removed from the
+  underlying ROS installation or that existing third-party packages migrate
+  automatically.
+- [ ] Extend `pkg` with node creation and incremental component additions:
+  publishers, subscribers, service clients/servers, action clients/servers,
+  timers, and parameters, for Python and C++.
+- [ ] Calculate dependencies in one shared semantic model before rendering.
+  Update `BUILD.bazel` and `package.xml` consistently, including interface
+  packages and language-specific dependencies such as `rclcpp_action`.
+  Change `MODULE.bazel` only for new external Bazel dependencies. Support
+  explicit additional dependencies and deduplicate existing entries.
+- [ ] Use Jinja2 for readable source templates, structured XML editing, and
+  Bazel-aware build-file updates. Preview and validate the complete change
+  before writing; repeated additions must not duplicate wiring or overwrite
+  student edits. Define safe insertion boundaries for existing nodes.
+- [ ] Provide progressively removable assistance: **create** applies the
+  changes; **explain** optionally shows the exact diff and why each edit is
+  needed; **practice** prints the steps without applying them; **verify**
+  checks builds and observable ROS behavior after automatic or manual edits.
+  Generated nodes must build and run without the scaffolder installed.
+- [ ] Integrate explanations with the planned saved preference and
+  `EXPLAIN=0` / `EXPLAIN=only` behavior below. Use the same change/recipe model
+  for applied edits, explanations, manual exercises, and exported scripts.
+  Distinguish independently using ROS with Bazel from the conventional
+  ament/CMake or Python packaging steps shown in ROS tutorials. Give native
+  platform recipes their actual verification status.
+- [ ] Update Make and PowerShell entry points, workspace initialization,
+  help, documentation, and smoke tests together. Preserve existing student
+  work and verify the supported classroom architectures before switching
+  defaults. Advance this checklist on `main` when milestones are integrated.
+
 ## Stages
 
 ### Stage 1 — Task-level make targets
@@ -52,7 +108,8 @@ Decisions made along the way:
 - **`make node` is deferred.** Adding a node to an existing package means
   patching a `CMakeLists.txt` or `setup.py` the student may already have
   edited by hand — much riskier than generating fresh files. Revisit once
-  `pkg` is ported to Python (see the language section below).
+  `pkg` is ported to Python (see the language section below). The Bazel and
+  editable node scaffolding checklist above now records the planned successor.
 - **Two terminals, stated everywhere.** Every `make` command runs on the
   student's own computer; the terminal inside the browser desktop is for ROS
   commands. Because `make` exists inside the container, a workstation target
