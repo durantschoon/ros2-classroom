@@ -12,6 +12,9 @@ workspace-src/
 # Agent worktrees are created inside the repo; never commit them.
 .claude/worktrees/
 
+# Other agent related
+.codex/
+
 # Python bytecode, e.g. from `make check`.
 __pycache__/
 
