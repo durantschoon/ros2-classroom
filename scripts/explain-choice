@@ -22,6 +22,7 @@ Stdlib only, Python 3.9-compatible: this runs on a student's own machine.
 
 import json
 import os
+import runpy
 import sys
 import tempfile
 from enum import Enum
@@ -271,7 +272,55 @@ def ask_and_save() -> int:
     return 0
 
 
+def dispatch(goals: Sequence[str]) -> int:
+    """Read preference after asking; print only, and never invoke a workflow."""
+    override = parse_override(os.environ.get("EXPLAIN"))
+    if isinstance(override, BadOverride):
+        say(render_bad_override(override), sys.stderr)
+        return 2
+    mode = override or read_saved(PREFERENCES) or Explain.OFF
+    if mode is Explain.OFF:
+        return 0
+    model = runpy.run_path(str(ROOT / "scripts" / "native-recipes"))
+    error, parsed = model["Error"], model["Parsed"]
+    distro = model["effective_distro"](os.environ, model["read_local"](str(ROOT / ".env")))
+    if isinstance(distro, error):
+        say(distro.message, sys.stderr)
+        return 2
+    values = dict(os.environ)
+    for name in ("PKG", "NODE", "TEMPLATE", "PYTHON", "INTERFACES", "NATIVE_WORKSPACE"):
+        raw_name = "NATIVE_RAW_" + ("WORKSPACE" if name == "NATIVE_WORKSPACE" else name)
+        if raw_name in values:
+            values[name] = values[raw_name]
+    values["NATIVE_WORKSPACE"] = values.get("NATIVE_WORKSPACE") or str(Path.home() / "ros2_ws")
+    # Validate all supplied values even when this host has no matching recipe.
+    requests = [model["operation_request"](goal, values) for goal in goals]
+    for request in requests:
+        if isinstance(request, error):
+            say("Native commands unavailable: " + request.message, sys.stderr)
+            return 2
+    path = ROOT / "recipes" / "native" / "ubuntu-apt.json"
+    loaded = model["load"](str(path)) if path.exists() else parsed({"schema_version": 1, "recipes": []})
+    catalog = model["parse_catalog"](loaded.value) if isinstance(loaded, parsed) else loaded
+    if isinstance(catalog, error):
+        say("Native catalog error: " + catalog.message, sys.stderr)
+        return 2
+    facts = model["parse_facts"]({"schema_version": 1, "facts": model["encode"](model["collect"](distro.value))})
+    if isinstance(facts, error):
+        say(facts.message, sys.stderr)
+        return 2
+    result = model["explain_goals"](tuple(goals), values, catalog.value, model["classify"](facts.value))
+    if isinstance(result, error):
+        say(result.message, sys.stderr)
+        return 2
+    output, unsupported = result.value
+    say(output.rstrip(), sys.stderr if mode is Explain.ONLY and unsupported else sys.stdout)
+    return 2 if mode is Explain.ONLY and unsupported else 0
+
+
 def main(argv: Sequence[str]) -> int:
+    if argv and argv[0] == "--dispatch":
+        return dispatch(argv[1:])
     mode = parse_mode(argv)
     if mode is None:
         say(USAGE, sys.stderr)
@@ -282,9 +331,6 @@ def main(argv: Sequence[str]) -> int:
         return 2
 
     if mode is Mode.GUARD:
-        if override is Explain.ONLY:
-            say("Native recipes are unavailable in this version; EXPLAIN=only runs nothing.", sys.stderr)
-            return 2
         return 0
 
     if mode is Mode.SHOW:
