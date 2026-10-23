@@ -52,7 +52,7 @@ REAL_TOOLS = (
 
 # Environment variables recorded with every compose call: the suite's isolation
 # is expressed by exporting these before it runs compose at all.
-RECORDED = ("ROS_DOMAIN_ID", "NOVNC_PORT", "COMPOSE")
+RECORDED = ("ROS_DOMAIN_ID", "NOVNC_PORT", "COMPOSE", "EXPLAIN")
 
 MISSING_TOOLS = [name for name in REAL_TOOLS if shutil.which(name) is None]
 NEEDS_TOOLS = (
@@ -390,6 +390,12 @@ class SmokeTest(unittest.TestCase):
 
 class ProjectIsolation(SmokeTest):
     """The suite must never share a compose project with a student's workstation."""
+
+    def test_selftest_forces_explain_off_for_every_nested_workflow(self) -> None:
+        case = scenario("explain_on", compose_rules=HAPPY_COMPOSE_RULES, curl_exit=0, EXPLAIN="1")
+        self.assertNotIn("Native commands", case.run.out + case.run.err, case.report())
+        for env in case.sandbox.recorded_envs("compose"):
+            self.assertEqual("0", env.get("EXPLAIN"), case.report())
 
     def test_every_compose_call_carries_the_selftest_project(self) -> None:
         self.assertProjectOnEveryCall(all_fail())

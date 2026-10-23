@@ -169,9 +169,19 @@ ignored `.workstation/preferences.json`. The first interactive student command
 asks whether to save off or on; `make choose` (Windows: `.\ros2.ps1 choose`)
 asks again. Both input and output must be terminals. Scripts and CI default to
 off without saving a choice. `EXPLAIN=0` or `EXPLAIN=1` overrides the saved
-choice for one command. This version saves the preference while native recipes
-are being added; `EXPLAIN=only` refuses operations without running them because
-recipes are unavailable. It never starts a container or opens a browser.
+choice for one command. With explanations on, native Bash guidance prints first,
+then the usual container workflow runs. `EXPLAIN=only` prints guidance and exits
+before engine checks, network access or browser launches. An unsupported recipe
+returns a nonzero result in `only` mode; with explanations on, the container
+workflow continues.
+
+Recipes match the configured `ROS_DISTRO` and exact host platform. Ubuntu 26.04
+with ROS 2 Lyrical is the initial apt candidate, pending successful native CI and
+recorded evidence before activation. Other combinations, GUI operations, package
+templates and interfaces remain explicitly unsupported. Windows uses WSL 2;
+printing an explanation needs neither Python nor Docker on Windows. Set
+`NATIVE_WORKSPACE` to an absolute native workspace path (default: `~/ros2_ws`).
+See [native recipe coverage and developer interfaces](docs/native-explanations.md).
 
 ## Documentation
 

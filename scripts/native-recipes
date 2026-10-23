@@ -8,6 +8,7 @@ import argparse
 import dataclasses
 import datetime
 import enum
+import hashlib
 import json
 import os
 import plistlib
@@ -361,6 +362,127 @@ def select(recipes: Tuple[Recipe, ...], host: Mapping[str, Fact], operation: Ope
     return Parsed(matches[0])
 
 
+def render_parameters(recipe: Recipe, parameters: Mapping[str, str]) -> Union[Parsed, Error]:
+    if recipe.platform.os is HostOS.UBUNTU and "workspace" in parameters and not parameters["workspace"].startswith("/"):
+        return Error("invalid-request", "Ubuntu native workspace must be an absolute POSIX path")
+    return Parsed(parameters)
+
+
+def render(recipe: Recipe, parameters: Mapping[str, str]) -> str:
+    """Pure Bash display; each token remains one shell word, including quotes."""
+    evidence = recipe.verification
+    lines = ["# Native Bash commands: " + recipe.identity,
+             "# " + evidence.status.value + ": " + evidence.reference,
+             "# " + evidence.date + "; " + evidence.procedure]
+    lines += ["# " + line for line in recipe.guidance]
+    for command in recipe.commands:
+        argv = [token.value if isinstance(token, Literal) else parameters[token.name]
+                for token in command.argv]
+        lines.append(" ".join("'" + value.replace("'", "'\"'\"'") + "'" for value in argv))
+    return "\n".join(lines) + "\n"
+
+
+def admitted(recipe: Recipe) -> bool:
+    """Draft fixtures can exercise CI, but never become student verification."""
+    evidence = recipe.verification
+    if evidence.status is not Status.CI:
+        return not evidence.reference.startswith("https://example.invalid/")
+    match = re.fullmatch(r"https://github.com/[^/]+/[^/]+/actions/runs/([1-9][0-9]*)", evidence.reference)
+    return bool(match and dict(evidence.provenance).get("ci_run") == match[1]
+                and "Recipe SHA-256: " + fingerprint(recipe) in evidence.procedure)
+
+
+def fingerprint(recipe: Recipe) -> str:
+    """Canonical recipe data excluding mutable verification metadata."""
+    data = encode(recipe)
+    del data["verification"]
+    canonical = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def operation_request(goal: str, values: Mapping[str, str]) -> Union[Parsed, Error]:
+    """Translate existing wrappers without inventing template implementations."""
+    workspace = values.get("NATIVE_WORKSPACE", "") or "/workspace"
+    package = values.get("PKG", "")
+    node = values.get("NODE", "")
+    for key, value in (("package", package), ("node", node)):
+        if value and not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", value):
+            return Error("invalid-request", key + " must be a single ROS identifier")
+    operation = {"image": "install", "up": "install", "open": "session",
+                 "desktop": "install", "shell": "shell", "turtlesim": "turtlesim",
+                 "turtlesim-teleop": "teleop", "package": "package", "run": "run",
+                 "build": "build" if package else "build-workspace",
+                 "test": "test" if package else "test-workspace"}.get(goal, "container-maintenance")
+    if operation not in ("install", "container-maintenance") and not (
+            workspace.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", workspace) or workspace.startswith("\\\\")):
+        return Error("invalid-request", "NATIVE_WORKSPACE must be an absolute path")
+    parameters = {"workspace": workspace}
+    if operation == "install" or operation == "container-maintenance":
+        parameters = {}
+    if operation in ("package", "build", "test", "run"):
+        parameters["package"] = package
+    if operation == "run":
+        parameters["node"] = node
+    if operation == "package" and values.get("INTERFACES") and (values.get("TEMPLATE") or values.get("PYTHON")):
+        return Error("invalid-request", "interfaces require CMake and cannot be combined with a template")
+    if operation == "package":
+        parameters["build_type"] = "ament_python" if values.get("PYTHON") else "ament_cmake"
+        if values.get("INTERFACES"):
+            operation = "package-interfaces"
+            parameters.pop("build_type")
+        elif values.get("TEMPLATE"):
+            operation = "package-template"
+            parameters["template"] = values["TEMPLATE"]
+    return parse_request({"operation": operation, "parameters": parameters})
+
+
+def effective_distro(values: Mapping[str, str], env_text: str) -> Union[Parsed, Error]:
+    """Compose precedence for ROS_DISTRO: caller override, .env, project default."""
+    raw = values.get("NATIVE_CONFIGURED_ROS_DISTRO", values.get("ROS_DISTRO"))
+    if values.get("NATIVE_ROS_DISTRO_ORIGIN") == "file":
+        raw = None
+    if raw is None:
+        for line in env_text.splitlines():
+            match = re.fullmatch(r"\s*(?:export\s+)?ROS_DISTRO\s*=\s*(.*?)\s*", line)
+            if match:
+                raw = match[1]
+                if raw.startswith(("'", '\"')) and raw[-1:] == raw[:1]:
+                    raw = raw[1:-1]
+                else:
+                    raw = re.split(r"\s+#", raw)[0].strip()
+        if raw is None:
+            raw = "lyrical"
+    if not word(raw):
+        return Error("invalid-request", "configured ROS_DISTRO must be a literal identifier")
+    return Parsed(raw)
+
+
+def explain_goals(goals: Tuple[str, ...], values: Mapping[str, str], catalog: Tuple[Recipe, ...],
+                  host: Mapping[str, Fact]) -> Union[Parsed, Error]:
+    """Pure all-or-nothing request validation before any workflow action."""
+    requests = [operation_request(goal, values) for goal in goals]
+    for request in requests:
+        if isinstance(request, Error):
+            return request
+    lines = []
+    unsupported = False
+    for goal, request in zip(goals, requests):
+        operation, pairs = request.value
+        result = select(catalog, host, operation)
+        if isinstance(result, Parsed):
+            checked = render_parameters(result.value, dict(pairs))
+            if isinstance(checked, Error):
+                return checked
+        if isinstance(result, Parsed) and not admitted(result.value):
+            result = Error("no-match", "candidate awaits an actual successful CI run")
+        if isinstance(result, Error):
+            unsupported = True
+            lines.append("Native commands unavailable for " + goal + ": " + result.message + ".\n")
+        else:
+            lines.append(render(result.value, dict(pairs)))
+    return Parsed(("".join(lines), unsupported))
+
+
 # Imperative shell: passive file/environment/PATH reads only. No subprocess import.
 def read_local(path: str) -> str:
     try:
@@ -461,7 +583,55 @@ def main() -> int:
     selector.add_argument("catalog")
     selector.add_argument("facts")
     selector.add_argument("request")
+    renderer = sub.add_parser("render")
+    renderer.add_argument("catalog")
+    renderer.add_argument("facts")
+    renderer.add_argument("request")
+    renderer.add_argument("--candidate", action="store_true", help="CI only: render synthetic candidate evidence")
+    protocol = sub.add_parser("protocol")
+    protocol.add_argument("input")
+    mapper = sub.add_parser("request")
+    mapper.add_argument("goal")
+    mapper.add_argument("values")
+    configuration = sub.add_parser("configuration")
+    configuration.add_argument("values")
+    configuration.add_argument("env_file")
     args = parser.parse_args()
+    if args.command in ("protocol", "request", "configuration"):
+        loaded = load(args.input if args.command == "protocol" else args.values)
+        result = loaded
+        if isinstance(loaded, Parsed):
+            if args.command == "protocol":
+                raw = loaded.value
+                if not fields(raw, ("schema_version", "catalog", "facts", "request")) or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+                    result = Error("invalid-protocol", "expected protocol schema_version 1")
+                else:
+                    catalog, facts, request = parse_catalog(raw["catalog"]), parse_facts(raw["facts"]), parse_request(raw["request"])
+                    result = next((x for x in (catalog, facts, request) if isinstance(x, Error)), None)
+                    if result is None:
+                        operation, parameters = request.value
+                        selected = select(catalog.value, classify(facts.value), operation)
+                        checked = selected if isinstance(selected, Error) else render_parameters(selected.value, dict(parameters))
+                        result = checked if isinstance(checked, Error) else Parsed({
+                            "schema_version": 1, "recipe": encode(selected.value), "parameters": dict(parameters),
+                            "rendered": render(selected.value, dict(parameters)),
+                            "fingerprint": fingerprint(selected.value), "admitted": admitted(selected.value)})
+            elif not isinstance(loaded.value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in loaded.value.items()):
+                result = Error("invalid-request", "values must be a string mapping")
+            elif args.command == "request":
+                values = dict(loaded.value)
+                values.setdefault("NATIVE_WORKSPACE", str(Path.home() / "ros2_ws"))
+                mapped = operation_request(args.goal, values)
+                result = mapped if isinstance(mapped, Error) else Parsed({"operation": mapped.value[0].value, "parameters": dict(mapped.value[1])})
+            else:
+                resolved = effective_distro(loaded.value, read_local(args.env_file))
+                result = resolved if isinstance(resolved, Error) else Parsed({"ros_distro": resolved.value})
+        if isinstance(result, Error):
+            unsupported = result.code in ("no-match", "unknown-platform", "ambiguous-selection", "unsupported-operation")
+            print(json.dumps({"outcome": "unsupported" if unsupported else "error", "error": encode(result)}, sort_keys=True))
+            return 1 if unsupported else 2
+        print(json.dumps(dict(result.value, outcome="ok"), sort_keys=True))
+        return 0
     if args.command == "detect":
         collected = {"schema_version": 1, "facts": encode(collect(args.ros_distro))}
         parsed = parse_facts(collected)
@@ -489,6 +659,15 @@ def main() -> int:
                 else:
                     operation, parameters = request.value
                     selected = select(catalog, classify(facts.value), operation)
+                    if args.command == "render" and isinstance(selected, Parsed):
+                        checked = render_parameters(selected.value, dict(parameters))
+                        if isinstance(checked, Error):
+                            selected = checked
+                        elif not args.candidate and not admitted(selected.value):
+                            selected = Error("no-match", "candidate awaits an actual successful CI run")
+                        else:
+                            print(render(selected.value, dict(parameters)), end="")
+                            return 0
                     result = selected if isinstance(selected, Error) else Parsed({
                         "schema_version": 1, "recipe": encode(selected.value),
                         "parameters": dict(parameters)})

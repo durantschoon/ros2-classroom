@@ -108,8 +108,12 @@ Acceptance: a new student is asked exactly once; nothing native is printed
 for a student who chose option 1; and no command is ever printed without a
 verification status attached.
 
-The Python port prerequisite is complete. The native recipe work below is
-still planned; recipes are structured data and belong in Python:
+The Python port, saved preference, strict recipe model, passive detection and
+safe explanation dispatch are implemented. Ubuntu 26.04/Lyrical apt recipes
+remain candidates until the native workflow installs ROS on fresh amd64 and
+arm64 runners and records passing evidence. macOS and WSL coverage remains
+planned. GUI, template and interface equivalents are currently unsupported.
+Recipes are shared JSON data consumed by Python and PowerShell:
 
 1. The first-run question, its saved answer, and the target that changes it.
 2. The recipe data model and platform detection (the Stage 4 decision points).

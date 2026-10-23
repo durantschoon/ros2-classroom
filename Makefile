@@ -48,6 +48,45 @@ DESKTOP_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 $(SERVICE) bash 
 # its "next:" hints name make targets instead of pkg subcommands.
 PKG_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(SERVICE) bash -lc
 
+# Preserve wrapper values as data before Make can interpret dollar signs.
+export NATIVE_RAW_PKG := $(value PKG)
+export NATIVE_RAW_NODE := $(value NODE)
+export NATIVE_RAW_TEMPLATE := $(value TEMPLATE)
+export NATIVE_RAW_PYTHON := $(value PYTHON)
+export NATIVE_RAW_INTERFACES := $(value INTERFACES)
+export NATIVE_RAW_WORKSPACE := $(value NATIVE_WORKSPACE)
+export NATIVE_CONFIGURED_ROS_DISTRO := $(value ROS_DISTRO)
+export NATIVE_ROS_DISTRO_ORIGIN := $(origin ROS_DISTRO)
+ifneq ($(origin PKG),undefined)
+override PKG := $(value PKG)
+export PKG
+endif
+ifneq ($(origin NODE),undefined)
+override NODE := $(value NODE)
+export NODE
+endif
+ifneq ($(origin TEMPLATE),undefined)
+override TEMPLATE := $(value TEMPLATE)
+export TEMPLATE
+endif
+ifneq ($(origin PYTHON),undefined)
+override PYTHON := $(value PYTHON)
+export PYTHON
+endif
+ifneq ($(origin INTERFACES),undefined)
+override INTERFACES := $(value INTERFACES)
+export INTERFACES
+endif
+ifneq ($(origin NATIVE_WORKSPACE),undefined)
+override NATIVE_WORKSPACE := $(value NATIVE_WORKSPACE)
+export NATIVE_WORKSPACE
+endif
+# Keep the project's default out of Compose's environment: .env still wins.
+ifneq ($(filter environment command line,$(origin ROS_DISTRO)),)
+override ROS_DISTRO := $(value ROS_DISTRO)
+export ROS_DISTRO
+endif
+
 # --- `make <target> help` and `make <target> examples` ------------------------
 # make has no subcommands: `make shell help` means "run shell, then run help".
 # So when help or examples is named alongside another goal, no real target may
@@ -57,6 +96,22 @@ PKG_EXEC = $(QUIET) $(COMPOSE) exec -T -u ros -e DISPLAY=:1 -e PKG_VIA_MAKE=1 $(
 # any target it has nothing to say about.
 HELP_WORDS := $(filter help examples,$(MAKECMDGOALS))
 HELP_TOPICS := $(filter-out help examples,$(MAKECMDGOALS))
+
+ifeq (x$(EXPLAIN)x,xonlyx)
+NATIVE_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),help)
+ifeq ($(filter help examples,$(NATIVE_GOALS)),)
+.PHONY: $(MAKECMDGOALS) native-only
+$(if $(MAKECMDGOALS),$(MAKECMDGOALS),help): native-only
+native-only:
+	@./scripts/explain-choice --dispatch $(if $(MAKECMDGOALS),$(MAKECMDGOALS),help)
+else
+.PHONY: $(MAKECMDGOALS)
+$(firstword $(NATIVE_GOALS)):
+	@./scripts/workstation-help --compose 'not checked - EXPLAIN override skips engine detection' --url '$(URL)' $(NATIVE_GOALS)
+$(wordlist 2,99,$(NATIVE_GOALS)):
+	@:
+endif
+else
 
 ifneq ($(and $(HELP_WORDS),$(HELP_TOPICS)),)
 
@@ -103,6 +158,7 @@ preference-check:
 ifneq ($(filter up open shell turtlesim turtlesim-teleop package build run test,$(MAKECMDGOALS)),)
 	@./scripts/explain-choice --ask-once
 endif
+	@$(if $(filter-out selftest,$(MAKECMDGOALS)),,EXPLAIN=0 ) ./scripts/explain-choice --dispatch $(if $(MAKECMDGOALS),$(MAKECMDGOALS),help)
 
 choose:
 	@./scripts/explain-choice --choose
@@ -275,7 +331,7 @@ uninstall: require-engine
 # It runs as a separate compose project on port 6081, so those are its OWN
 # volumes -- safe to run while a student's desktop is up, with work in it.
 selftest: preference-check
-	./scripts/smoke-container
+	EXPLAIN=0 ./scripts/smoke-container
 
 # Black-box tests for the host scripts: each one runs as a subprocess against
 # fake executables on a throwaway PATH.  No engine, no containers, no network,
@@ -298,3 +354,5 @@ digest: preference-check
 	fi
 
 endif  # topic-help mode, opened near the top of this file
+
+endif  # EXPLAIN=only intercepts every goal before prerequisites
