@@ -40,10 +40,14 @@ if ($scriptDir) {
 # Sorted into: NAME=value assignments, help/examples words, and bare words,
 # which fill -Pkg then -Node as the positional parameters used to.
 
+# Keep the boundary value before an older environment provider can erase an
+# explicitly empty assignment. Null alone means that no override was supplied.
+$ExplainOverrideValue = [Environment]::GetEnvironmentVariable("EXPLAIN")
 $HelpWords = @()
 $BareWords = @()
 foreach ($word in $Rest) {
     if ($word -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
+        if ($Matches[1] -ceq "EXPLAIN") { $ExplainOverrideValue = $Matches[2] }
         Set-Item -Path "env:$($Matches[1])" -Value $Matches[2]
     } elseif ($word -eq "help" -or $word -eq "examples") {
         $HelpWords += $word
@@ -217,9 +221,9 @@ function Test-Terminal {
 }
 
 function Get-ExplainOverride {
-    <# EXPLAIN as off/on/only, "" when unset or empty; stops on anything else. #>
-    $raw = "$env:EXPLAIN"
-    if ($null -eq [Environment]::GetEnvironmentVariable("EXPLAIN")) { return "" }
+    <# EXPLAIN as off/on/only, "" only when unset; stops on anything else. #>
+    $raw = $ExplainOverrideValue
+    if ($null -eq $raw) { return "" }
     if ($raw -ceq "0") { return "off" }
     if ($raw -ceq "1") { return "on" }
     if ($raw -ceq "only") { return "only" }

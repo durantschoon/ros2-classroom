@@ -15,13 +15,10 @@ ifneq ($(origin EXPLAIN),undefined)
 ifneq (x$(EXPLAIN)x,x0x)
 ifneq (x$(EXPLAIN)x,x1x)
 DETECTED =
+DETECTION_SKIPPED := 1
 endif
 endif
 export EXPLAIN
-endif
-# Help and changing the preference need no engine, including in dry runs.
-ifneq ($(filter help examples choose,$(MAKECMDGOALS)),)
-DETECTED =
 endif
 ENGINE ?= $(firstword $(DETECTED))
 COMPOSE ?= $(wordlist 2,99,$(DETECTED))
@@ -79,7 +76,7 @@ else
 # have their own `help` and `examples` in bold on a terminal, or marked with
 # a * when piped.
 help:
-	@./scripts/workstation-help --compose '$(if $(COMPOSE),$(COMPOSE),none detected - run "make engine")' --url '$(URL)'
+	@./scripts/workstation-help --compose '$(if $(COMPOSE),$(COMPOSE),$(if $(DETECTION_SKIPPED),not checked - EXPLAIN override skips engine detection,none detected - run "make engine"))' --url '$(URL)'
 
 # `make examples` alone: say which targets have them.
 examples:

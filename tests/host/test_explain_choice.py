@@ -574,5 +574,31 @@ class SafetyTests(MakefileTests):
             self.assertFalse(marker.exists(), run.report())
 
 
+    def test_default_and_off_help_report_the_working_fake_engine(self):
+        for assignments in ([], ["EXPLAIN=0"]):
+            run = subprocess.run([str(MAKE), "--no-print-directory", "help"] + assignments,
+                                 cwd=str(self.tree), env=self.sandbox.environ(),
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+            self.assertEqual(0, run.returncode, run.stderr.decode())
+            self.assertIn(b"Container engine: docker compose", run.stdout)
+            self.assertNotIn(b"none detected", run.stdout)
+            self.assertTrue(self.sandbox.called("docker"))
+
+    def test_only_help_says_detection_was_not_checked(self):
+        run = self.make_piped("help", "COMPOSE=", "EXPLAIN=only")
+        self.assertStatus(run, 0)
+        self.assertIn("Container engine: not checked", run.out)
+        self.assertNotIn("none detected", run.out)
+        self.assertFalse(self.sandbox.called("docker"))
+
+    def test_choose_beside_shell_preserves_detection_and_prompts_once(self):
+        run = run_on_pty([str(MAKE), "--no-print-directory", "choose", "shell"],
+                         self.sandbox.environ(), self.tree, keys=[b"1\n"], prompt=PROMPT)
+        self.assertStatus(run, 0)
+        self.assertEqual(1, run.out.count(FIRST_LINE), run.report())
+        self.assertSaved(SAVED_OFF, run)
+        self.assertIn(["compose", "run", "--rm", "shell"], self.sandbox.argv("docker"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -289,3 +289,25 @@ class PreferenceParityTests(ScriptTestCase):
         self.assertNotEqual(0, run.status)
         self.assertEqual("original", (self.saved / "keep").read_text())
         self.assertEqual(["preferences.json"], [p.name for p in self.saved.parent.iterdir()])
+
+    def test_empty_assignment_is_invalid_before_workflow_or_question(self):
+        # Pre-7.5 and Windows PowerShell erase empty environment assignments.
+        # Exercise the raw NAME=value boundary with and without a valid env value.
+        for inherited in (None, "0", "1", "only"):
+            overrides = {} if inherited is None else {"EXPLAIN": inherited}
+            for target in ("desktop", "shell", "open", "doctor", "help"):
+                run = self.ps([target, "EXPLAIN="], **overrides)
+                self.assertStatus(run, 2)
+                self.assertIn("EXPLAIN= is not understood", run.out + run.err)
+                self.assertNotIn("One question", run.out + run.err)
+                self.assertFalse(self.sandbox.called("docker"), run.report())
+                self.assertFalse(self.sandbox.called("xdg-open"), run.report())
+                self.assertFalse(self.saved.exists())
+
+    def test_invalid_environment_override_is_preserved_before_effects(self):
+        for value in ("maybe", "ONLY", " ", "0 1"):
+            run = self.ps(["desktop"], EXPLAIN=value)
+            self.assertStatus(run, 2)
+            self.assertIn("not understood", run.out + run.err)
+            self.assertFalse(self.sandbox.called("docker"), run.report())
+            self.assertFalse(self.saved.exists())
