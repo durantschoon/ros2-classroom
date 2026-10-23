@@ -176,3 +176,138 @@ class ConfirmationTests(Ros2Ps1TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(PWSH, "pwsh is required for cross-wrapper preference parity")
+class PreferenceParityTests(ScriptTestCase):
+    def setUp(self):
+        super().setUp()
+        from pathlib import Path
+        self.tree = self.sandbox.root / "repo with spaces"
+        (self.tree / "scripts").mkdir(parents=True)
+        shutil.copy2(str(REPO / "ros2.ps1"), str(self.tree / "ros2.ps1"))
+        shutil.copy2(str(REPO / "scripts" / "explain-choice"), str(self.tree / "scripts" / "explain-choice"))
+        self.saved = self.tree / ".workstation" / "preferences.json"
+        self.sandbox.fake("docker", exit_code=37)
+        self.sandbox.fake("xdg-open", exit_code=37)
+        self.env = self.sandbox.environ(POWERSHELL_TELEMETRY_OPTOUT="1", POWERSHELL_UPDATECHECK="Off")
+
+    def ps(self, args, keys=(), terminal=False, output=True, **overrides):
+        from fakes import run_on_pty
+        env = dict(self.env, **overrides)
+        argv = [str(PWSH), "-NoLogo", "-NoProfile", "-File", str(self.tree / "ros2.ps1")] + args
+        if terminal:
+            return run_on_pty(argv, env, self.sandbox.root, keys=keys,
+                              prompt="Choose 1 or 2 [1]: " if output else None,
+                              stdout_on_pty=output)
+        proc = subprocess.run(argv, cwd=str(self.sandbox.root), env=env, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        return Run(proc.returncode, proc.stdout.decode(), proc.stderr.decode())
+
+    def test_cross_wrapper_writes_identical_bytes_and_reads_bom(self):
+        from fakes import run_on_pty
+        for answer, mode in ((b"2\n", "on"), (b"1\n", "off")):
+            run = self.ps(["choose"], keys=[answer], terminal=True)
+            self.assertStatus(run, 0)
+            expected = ('{"version": 1, "explain": "' + mode + '"}\n').encode()
+            self.assertEqual(expected, self.saved.read_bytes())
+            proc = subprocess.run([str(self.tree / "scripts" / "explain-choice"), "--show"],
+                                  env=self.env, cwd=str(self.sandbox.root), capture_output=True)
+            self.assertEqual((0, (mode + "\n").encode()), (proc.returncode, proc.stdout))
+        self.saved.write_bytes(b"\xef\xbb\xbf" + b'{"version": 1, "explain": "on"}\n')
+        run = self.ps(["shell"], terminal=True)
+        self.assertNotIn("One question", run.out)
+        run = run_on_pty([str(self.tree / "scripts" / "explain-choice"), "--choose"],
+                         self.env, self.sandbox.root, keys=[b"2\n"], prompt="Choose 1 or 2 [1]: ")
+        self.assertStatus(run, 0)
+        run = self.ps(["choose"], keys=[b"1\n"], terminal=True)
+        self.assertIn("Your current answer: option 2", run.out)
+
+    def test_only_and_invalid_never_call_engine_or_browser(self):
+        for mode in ("only", "ONLY", "maybe", " ", "0 1"):
+            for target in ("desktop", "up", "open", "shell", "package", "build", "run", "test",
+                           "image", "logs", "ps", "down", "reset", "uninstall", "doctor", "engine"):
+                run = self.ps([target, "EXPLAIN=" + mode])
+                self.assertNotEqual(0, run.status, run.report())
+                self.assertFalse(self.sandbox.called("docker"), run.report())
+                self.assertFalse(self.sandbox.called("xdg-open"), run.report())
+        run = self.ps(["shell", "help", "EXPLAIN=only"])
+        self.assertStatus(run, 0)
+        self.assertFalse(self.sandbox.called("docker"))
+        run = self.ps(["open"], EXPLAIN="only")
+        self.assertNotEqual(0, run.status)
+        self.assertFalse(self.sandbox.called("docker"))
+
+    def test_desktop_asks_once_and_stops_at_fake_engine_failure(self):
+        run = self.ps(["desktop"], keys=[b"2\n"], terminal=True)
+        self.assertEqual(1, run.out.count("One question before we start"), run.report())
+        self.assertTrue(self.saved.exists(), run.report())
+        run = self.ps(["desktop"], terminal=True)
+        self.assertNotIn("One question", run.out)
+
+    def test_no_terminal_or_piped_output_never_saves(self):
+        for terminal, output in ((False, False), (True, False)):
+            run = self.ps(["shell"], terminal=terminal, output=output)
+            self.assertNotIn("One question", run.out + run.err)
+            self.assertFalse(self.saved.exists())
+
+    def test_overrides_ignore_corruption_and_need_no_python(self):
+        self.saved.parent.mkdir()
+        self.saved.write_text("broken")
+        self.sandbox.remove("python3")
+        for value in ("0", "1", "only"):
+            run = self.ps(["shell", "EXPLAIN=" + value], terminal=True)
+            self.assertNotIn("One question", run.out)
+            self.assertNotIn("could not be read", run.out + run.err)
+            self.assertEqual("broken", self.saved.read_text())
+
+    def test_controlling_pty_cancellation_eof_and_bounded_retries(self):
+        for keys, status in (([b"\x03"], 130), ([b"\x04"], 0),
+                             ([b"x\n", b"3\n", b"yes\n"], 0)):
+            run = self.ps(["choose"], keys=keys, terminal=True)
+            self.assertStatus(run, status)
+            self.assertFalse(self.saved.exists(), run.report())
+            self.assertFalse(self.sandbox.called("docker"), run.report())
+        run = self.ps(["desktop"], keys=[b"\x03"], terminal=True)
+        self.assertStatus(run, 130)
+        self.assertFalse(self.saved.exists())
+        self.assertFalse(self.sandbox.called("docker"))
+
+    def test_bad_saved_state_and_failed_write_are_visible_and_atomic(self):
+        for text in ("bad json", '{"version":2,"explain":"on"}',
+                     '{"version":1,"explain":"only"}'):
+            self.saved.parent.mkdir(exist_ok=True)
+            self.saved.write_text(text)
+            run = self.ps(["choose"], keys=[b"2\n"], terminal=True)
+            self.assertStatus(run, 0)
+            self.assertIn("could not be read", run.out)
+            self.assertEqual(b'{"version": 1, "explain": "on"}\n', self.saved.read_bytes())
+        self.saved.unlink()
+        self.saved.mkdir()
+        (self.saved / "keep").write_text("original")
+        run = self.ps(["choose"], keys=[b"2\n"], terminal=True)
+        self.assertNotEqual(0, run.status)
+        self.assertEqual("original", (self.saved / "keep").read_text())
+        self.assertEqual(["preferences.json"], [p.name for p in self.saved.parent.iterdir()])
+
+    def test_empty_assignment_is_invalid_before_workflow_or_question(self):
+        # Pre-7.5 and Windows PowerShell erase empty environment assignments.
+        # Exercise the raw NAME=value boundary with and without a valid env value.
+        for inherited in (None, "0", "1", "only"):
+            overrides = {} if inherited is None else {"EXPLAIN": inherited}
+            for target in ("desktop", "shell", "open", "doctor", "help"):
+                run = self.ps([target, "EXPLAIN="], **overrides)
+                self.assertStatus(run, 2)
+                self.assertIn("EXPLAIN= is not understood", run.out + run.err)
+                self.assertNotIn("One question", run.out + run.err)
+                self.assertFalse(self.sandbox.called("docker"), run.report())
+                self.assertFalse(self.sandbox.called("xdg-open"), run.report())
+                self.assertFalse(self.saved.exists())
+
+    def test_invalid_environment_override_is_preserved_before_effects(self):
+        for value in ("maybe", "ONLY", " ", "0 1"):
+            run = self.ps(["desktop"], EXPLAIN=value)
+            self.assertStatus(run, 2)
+            self.assertIn("not understood", run.out + run.err)
+            self.assertFalse(self.sandbox.called("docker"), run.report())
+            self.assertFalse(self.saved.exists())

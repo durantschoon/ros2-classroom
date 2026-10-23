@@ -72,6 +72,7 @@ INTRO = """\
 def groups(url: str) -> Tuple[Group, ...]:
     return (
         Group("Start here -- once per machine", (
+            Row("make choose", "Change the saved native explanation preference", None),
             Row("make doctor", "Check this machine can build and run the workstation", None),
             Row("make image", "Build the image (slow the first time, cached after)", None),
         )),

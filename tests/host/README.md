@@ -110,3 +110,8 @@ Python 3.9 grammar; it does not validate a Python 3.9 runtime.
 `WSL_DISTRO_NAME`, so its macOS and plain-Linux branches cannot be reached from
 outside the script on a WSL host. Those tests skip there, with that reason, and
 run in CI, which is real Linux.
+
+`test_explain_choice.py` uses controlling pseudo-terminals for the first-run
+question and Ctrl-C, copies the wrapper into paths containing spaces, and runs
+Make against recording executables. PowerShell preference parity tests require
+`pwsh` in CI; their local skips do not establish Windows parity.
