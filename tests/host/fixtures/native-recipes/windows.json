@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "facts": {
+    "system": {
+      "state": "known",
+      "values": [
+        "Windows"
+      ]
+    },
+    "version": {
+      "state": "known",
+      "values": [
+        "10.0.26100"
+      ]
+    },
+    "machine": {
+      "state": "known",
+      "values": [
+        "AMD64"
+      ]
+    },
+    "os_id": {
+      "state": "not-observed",
+      "values": []
+    },
+    "os_version": {
+      "state": "not-observed",
+      "values": []
+    },
+    "kernel_release": {
+      "state": "known",
+      "values": [
+        "generic"
+      ]
+    },
+    "ssh": {
+      "state": "none",
+      "values": []
+    },
+    "vm": {
+      "state": "not-observed",
+      "values": []
+    },
+    "tools": {
+      "state": "known",
+      "values": [
+        "apt-get",
+        "docker"
+      ]
+    },
+    "display": {
+      "state": "not-observed",
+      "values": []
+    },
+    "gpu": {
+      "state": "not-observed",
+      "values": []
+    },
+    "network": {
+      "state": "not-observed",
+      "values": []
+    },
+    "ros_distro": {
+      "state": "known",
+      "values": [
+        "lyrical"
+      ]
+    }
+  }
+}

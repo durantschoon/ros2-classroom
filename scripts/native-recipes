@@ -1,0 +1,496 @@
+#!/usr/bin/env python3
+"""Strict native recipe model and passive host facts; never executes recipes.
+
+Stdlib only; Python 3.9. See docs/native-explanations.md for the JSON contract.
+"""
+
+import argparse
+import dataclasses
+import datetime
+import enum
+import json
+import os
+import plistlib
+import re
+import shutil
+import sys
+from pathlib import Path
+from typing import Any, Dict, Mapping, NamedTuple, Tuple, Union
+
+
+class State(str, enum.Enum):
+    KNOWN = "known"
+    UNKNOWN = "unknown"
+    NONE = "none"
+    NOT_OBSERVED = "not-observed"
+
+
+class Status(str, enum.Enum):
+    CI = "verified-in-ci"
+    HAND = "verified-by-hand"
+    COMMUNITY = "community-reported"
+
+
+class Operation(str, enum.Enum):
+    INSTALL = "install"
+    SESSION = "session"
+    SHELL = "shell"
+    TURTLESIM = "turtlesim"
+    TELEOP = "teleop"
+    PACKAGE = "package"
+    TEMPLATE = "package-template"
+    INTERFACES = "package-interfaces"
+    BUILD_WORKSPACE = "build-workspace"
+    TEST_WORKSPACE = "test-workspace"
+    BUILD = "build"
+    RUN = "run"
+    TEST = "test"
+    MAINTENANCE = "container-maintenance"
+
+
+class HostOS(str, enum.Enum):
+    UBUNTU = "ubuntu"
+    MACOS = "macos"
+    WINDOWS = "windows"
+
+
+class Architecture(str, enum.Enum):
+    AMD64 = "amd64"
+    ARM64 = "arm64"
+
+
+class Context(str, enum.Enum):
+    NATIVE = "native"
+    WSL = "wsl"
+
+
+class Route(str, enum.Enum):
+    APT = "apt"
+    PIXI = "pixi"
+    WSL = "wsl2"
+
+
+PARAMETERS = {
+    Operation.INSTALL: (), Operation.SESSION: ("workspace",),
+    Operation.SHELL: ("workspace",), Operation.TURTLESIM: ("workspace",),
+    Operation.TELEOP: ("workspace",),
+    Operation.PACKAGE: ("workspace", "package", "build_type"),
+    Operation.TEMPLATE: ("workspace", "package", "build_type", "template"),
+    Operation.INTERFACES: ("workspace", "package"),
+    Operation.BUILD_WORKSPACE: ("workspace",),
+    Operation.TEST_WORKSPACE: ("workspace",),
+    Operation.BUILD: ("workspace", "package"),
+    Operation.RUN: ("workspace", "package", "node"),
+    Operation.TEST: ("workspace", "package"), Operation.MAINTENANCE: (),
+}
+FACT_KEYS = ("system", "version", "machine", "os_id", "os_version",
+             "kernel_release", "ssh", "vm", "tools", "display", "gpu",
+             "network", "ros_distro")
+TOOLS = ("apt-get", "dnf", "brew", "pixi", "docker", "podman", "wsl")
+
+
+@dataclasses.dataclass(frozen=True)
+class Error:
+    code: str
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Fact:
+    state: State
+    values: Tuple[str, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class Platform:
+    os: HostOS
+    version: str
+    architecture: Architecture
+    route: Route
+    ros_distro: str
+    context: Context
+
+
+@dataclasses.dataclass(frozen=True)
+class Evidence:
+    status: Status
+    reference: str
+    date: str
+    procedure: str
+    subject: str
+    provenance: Tuple[Tuple[str, str], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class Literal:
+    value: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Parameter:
+    name: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Command:
+    argv: Tuple[Union[Literal, Parameter], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class Recipe:
+    identity: str
+    platform: Platform
+    operation: Operation
+    verification: Evidence
+    commands: Tuple[Command, ...]
+    guidance: Tuple[str, ...]
+
+
+class Parsed(NamedTuple):
+    value: Any
+
+
+def fields(value: Any, keys: Tuple[str, ...]) -> bool:
+    return isinstance(value, dict) and set(value) == set(keys)
+
+
+def word(value: Any) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", value))
+
+
+def text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and not any(
+        ord(c) < 32 for c in value)
+
+
+def parse_fact(value: Any) -> Union[Parsed, Error]:
+    if not fields(value, ("state", "values")):
+        return Error("invalid-fact", "fact requires exactly state and values")
+    if value["state"] not in [s.value for s in State]:
+        return Error("invalid-fact", "unknown observation state")
+    values = value["values"]
+    if not isinstance(values, list) or not all(text(v) for v in values):
+        return Error("invalid-fact", "values must be a list of nonempty strings")
+    state = State(value["state"])
+    if (state is State.KNOWN) != bool(values) or len(set(values)) != len(values):
+        return Error("invalid-fact", "known needs unique values; other states need no values")
+    return Parsed(Fact(state, tuple(values)))
+
+
+def parse_facts(raw: Any) -> Union[Parsed, Error]:
+    if not fields(raw, ("schema_version", "facts")) or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+        return Error("invalid-facts", "expected facts schema_version 1")
+    if not fields(raw["facts"], FACT_KEYS):
+        return Error("invalid-facts", "facts must contain exactly the documented fact keys")
+    facts = {}
+    for name in FACT_KEYS:
+        result = parse_fact(raw["facts"][name])
+        if isinstance(result, Error):
+            return result
+        if name != "tools" and len(result.value.values) > 1:
+            return Error("invalid-fact", name + " requires at most one value")
+        facts[name] = result.value
+    if any(t not in TOOLS for t in facts["tools"].values):
+        return Error("invalid-fact", "unknown installed tool")
+    return Parsed(facts)
+
+
+def known(value: str) -> Fact:
+    return Fact(State.KNOWN, (value,)) if value else Fact(State.UNKNOWN)
+
+
+def single(fact: Fact) -> str:
+    return fact.values[0] if fact.state is State.KNOWN else ""
+
+
+def classify(facts: Mapping[str, Fact]) -> Dict[str, Fact]:
+    """Pure classifier shared by fixture input and passive collection."""
+    system = single(facts["system"])
+    machine = single(facts["machine"]).lower()
+    arch = {"aarch64": "arm64", "arm64": "arm64", "amd64": "amd64",
+            "x86_64": "amd64"}.get(machine, "")
+    os_name = {"Darwin": "macos", "Windows": "windows"}.get(system, "")
+    version = facts["version"]
+    if system == "Linux":
+        os_name = single(facts["os_id"])
+        version = facts["os_version"]
+    release = single(facts["kernel_release"]).lower()
+    context = "wsl" if system == "Linux" and "microsoft" in release else "native"
+    if system not in ("Linux", "Darwin", "Windows"):
+        context = ""
+    route = "apt" if os_name == "ubuntu" else {"macos": "pixi", "windows": "wsl2"}.get(os_name, "")
+    tools = facts["tools"]
+    engines = tuple(t for t in tools.values if t in ("docker", "podman"))
+    engine = Fact(State.KNOWN, engines) if engines else Fact(
+        State.NONE if tools.state in (State.KNOWN, State.NONE) else tools.state)
+    return dict(facts, os=known(os_name), version=version, architecture=known(arch),
+                context=known(context), route=known(route), engine=engine)
+
+
+def parse_platform(raw: Any) -> Union[Parsed, Error]:
+    if not fields(raw, ("os", "version", "architecture", "route", "ros_distro", "context")):
+        return Error("invalid-platform", "wrong platform fields")
+    if not all(word(v) for v in raw.values()):
+        return Error("invalid-platform", "platform fields require identifiers")
+    if raw["os"] not in ("ubuntu", "macos", "windows") or raw["architecture"] not in ("amd64", "arm64"):
+        return Error("invalid-platform", "unsupported OS or architecture")
+    expected = {"ubuntu": "apt", "macos": "pixi", "windows": "wsl2"}[raw["os"]]
+    if raw["route"] != expected or raw["context"] not in ("native", "wsl"):
+        return Error("invalid-platform", "invalid route or execution context")
+    if raw["context"] == "wsl" and raw["os"] != "ubuntu":
+        return Error("invalid-platform", "WSL guest recipes require Ubuntu")
+    return Parsed(Platform(HostOS(raw["os"]), raw["version"], Architecture(raw["architecture"]),
+                           Route(raw["route"]), raw["ros_distro"], Context(raw["context"])))
+
+
+def parse_evidence(raw: Any, identity: str) -> Union[Parsed, Error]:
+    if not fields(raw, ("status", "reference", "date", "procedure", "subject", "provenance")):
+        return Error("invalid-evidence", "all evidence fields are required")
+    if raw["status"] not in [s.value for s in Status] or not all(text(raw[k]) for k in ("reference", "date", "procedure", "subject")):
+        return Error("invalid-evidence", "unknown status or empty evidence")
+    provenance_key = {"verified-in-ci": "ci_run", "verified-by-hand": "environment",
+                      "community-reported": "report"}[raw["status"]]
+    if not fields(raw["provenance"], (provenance_key,)) or not text(raw["provenance"][provenance_key]):
+        return Error("invalid-evidence", "status requires matching provenance detail")
+    if raw["subject"] != identity:
+        return Error("invalid-evidence", "evidence subject must match recipe identity")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw["date"]):
+        return Error("invalid-evidence", "evidence date must be YYYY-MM-DD")
+    try:
+        datetime.date.fromisoformat(raw["date"])
+    except ValueError:
+        return Error("invalid-evidence", "invalid calendar date")
+    if not raw["reference"].startswith("https://") or len(raw["reference"]) <= 8:
+        return Error("invalid-evidence", "evidence needs an https permalink")
+    return Parsed(Evidence(Status(raw["status"]), raw["reference"], raw["date"],
+                           raw["procedure"], raw["subject"], tuple(raw["provenance"].items())))
+
+
+def parse_recipe(raw: Any) -> Union[Parsed, Error]:
+    if not fields(raw, ("id", "platform", "operation", "verification", "commands", "guidance")) or not word(raw["id"]):
+        return Error("invalid-recipe", "wrong recipe fields or identity")
+    platform = parse_platform(raw["platform"])
+    if isinstance(platform, Error):
+        return platform
+    if raw["operation"] not in [o.value for o in Operation]:
+        return Error("invalid-operation", "unknown operation")
+    operation = Operation(raw["operation"])
+    if operation is Operation.MAINTENANCE:
+        return Error("unsupported-operation", "container maintenance has no native recipe")
+    evidence = parse_evidence(raw["verification"], raw["id"])
+    if isinstance(evidence, Error):
+        return evidence
+    if not isinstance(raw["guidance"], list) or not all(text(s) for s in raw["guidance"]):
+        return Error("invalid-guidance", "guidance must be a string list")
+    if not isinstance(raw["commands"], list) or not raw["commands"]:
+        return Error("invalid-command", "commands must be a nonempty list")
+    commands = []
+    used = set()
+    for command in raw["commands"]:
+        if not fields(command, ("argv",)) or not isinstance(command["argv"], list) or not command["argv"]:
+            return Error("invalid-command", "command requires nonempty argv")
+        argv = []
+        for token in command["argv"]:
+            if fields(token, ("literal",)) and text(token["literal"]):
+                argv.append(Literal(token["literal"]))
+            elif fields(token, ("parameter",)) and isinstance(token["parameter"], str) and token["parameter"] in PARAMETERS[operation]:
+                argv.append(Parameter(token["parameter"]))
+                used.add(token["parameter"])
+            else:
+                return Error("invalid-command", "token must be a literal or declared parameter")
+        if not isinstance(argv[0], Literal):
+            return Error("invalid-command", "executable must be literal")
+        commands.append(Command(tuple(argv)))
+    if used != set(PARAMETERS[operation]):
+        return Error("invalid-command", "commands must account for every operation parameter")
+    return Parsed(Recipe(raw["id"], platform.value, operation, evidence.value,
+                         tuple(commands), tuple(raw["guidance"])))
+
+
+def parse_catalog(raw: Any) -> Union[Parsed, Error]:
+    if not fields(raw, ("schema_version", "recipes")) or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+        return Error("invalid-catalog", "expected recipe schema_version 1")
+    if not isinstance(raw["recipes"], list):
+        return Error("invalid-catalog", "recipes must be a list")
+    recipes = []
+    identities = set()
+    for value in raw["recipes"]:
+        result = parse_recipe(value)
+        if isinstance(result, Error):
+            return result
+        if result.value.identity in identities:
+            return Error("duplicate-identity", "recipe identities must be unique")
+        identities.add(result.value.identity)
+        recipes.append(result.value)
+    return Parsed(tuple(recipes))
+
+
+def parse_request(raw: Any) -> Union[Parsed, Error]:
+    if not fields(raw, ("operation", "parameters")) or raw["operation"] not in [o.value for o in Operation]:
+        return Error("invalid-request", "expected a known operation and parameters")
+    operation = Operation(raw["operation"])
+    if not fields(raw["parameters"], PARAMETERS[operation]):
+        return Error("invalid-request", "operation parameters do not match contract")
+    if not all(text(v) for v in raw["parameters"].values()):
+        return Error("invalid-request", "parameters must be nonempty strings without control characters")
+    if "build_type" in raw["parameters"] and raw["parameters"]["build_type"] not in ("ament_cmake", "ament_python"):
+        return Error("invalid-request", "unknown build type")
+    if "template" in raw["parameters"] and raw["parameters"]["template"] not in ("pubsub", "param"):
+        return Error("invalid-request", "unknown package template")
+    return Parsed((operation, tuple(sorted(raw["parameters"].items()))))
+
+
+def select(recipes: Tuple[Recipe, ...], host: Mapping[str, Fact], operation: Operation) -> Union[Parsed, Error]:
+    if operation is Operation.MAINTENANCE:
+        return Error("unsupported-operation", "container maintenance has no native equivalent")
+    names = ("os", "version", "architecture", "route", "ros_distro", "context")
+    if any(host[k].state is not State.KNOWN for k in names):
+        return Error("unknown-platform", "selection requires known " + ", ".join(names))
+    matches = [r for r in recipes if r.operation is operation and all(
+        getattr(r.platform, k) == single(host[k]) for k in names)]
+    if not matches:
+        return Error("no-match", "no evidenced recipe for this exact platform and operation")
+    if len(matches) != 1:
+        return Error("ambiguous-selection", "multiple recipes match; selection refuses to guess")
+    return Parsed(matches[0])
+
+
+# Imperative shell: passive file/environment/PATH reads only. No subprocess import.
+def read_local(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return ""
+
+
+def collect(ros_distro: str) -> Dict[str, Fact]:
+    facts = {name: Fact(State.NOT_OBSERVED) for name in FACT_KEYS}
+    system = {"linux": "Linux", "darwin": "Darwin", "win32": "Windows"}.get(sys.platform, "")
+    facts["system"] = known(system)
+    if hasattr(os, "uname"):
+        uname = os.uname()
+        facts["machine"] = known(uname.machine)
+        facts["kernel_release"] = known(uname.release)
+    else:
+        facts["machine"] = known(os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE", ""))
+    if system == "Linux":
+        release = {}
+        for line in read_local("/etc/os-release").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key in ("ID", "VERSION_ID"):
+                release[key] = value.strip('"\'')
+        facts["os_id"] = known(release.get("ID", ""))
+        facts["os_version"] = known(release.get("VERSION_ID", ""))
+        facts["version"] = facts["os_version"]
+        dmi = read_local("/sys/class/dmi/id/product_name").lower()
+        vm = next((name for name in ("virtualbox", "vmware", "kvm", "virtual machine", "qemu") if name in dmi), "")
+        facts["vm"] = known(vm) if vm else Fact(State.UNKNOWN)
+    elif system == "Darwin":
+        try:
+            with open("/System/Library/CoreServices/SystemVersion.plist", "rb") as stream:
+                version = plistlib.load(stream).get("ProductVersion", "")
+            facts["version"] = known(version if isinstance(version, str) else "")
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            facts["version"] = Fact(State.UNKNOWN)
+    elif system == "Windows":
+        version = sys.getwindowsversion()
+        facts["version"] = known("{}.{}.{}".format(version.major, version.minor, version.build))
+    facts["ssh"] = known("present") if any(os.environ.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")) else Fact(State.NONE)
+    facts["display"] = known("wayland") if os.environ.get("WAYLAND_DISPLAY") else (
+        known("x11") if os.environ.get("DISPLAY") else Fact(State.NOT_OBSERVED))
+    tools = tuple(t for t in TOOLS if shutil.which(t))
+    facts["tools"] = Fact(State.KNOWN, tools) if tools else Fact(State.NONE)
+    facts["ros_distro"] = known(ros_distro)
+    return facts
+
+
+def encode(value: Any) -> Any:
+    if isinstance(value, Literal):
+        return {"literal": value.value}
+    if isinstance(value, Parameter):
+        return {"parameter": value.name}
+    if isinstance(value, Evidence):
+        return dict({f.name: encode(getattr(value, f.name)) for f in dataclasses.fields(value)},
+                    provenance=dict(value.provenance))
+    if isinstance(value, Recipe):
+        return {"id": value.identity, "platform": encode(value.platform),
+                "operation": value.operation.value, "verification": encode(value.verification),
+                "commands": encode(value.commands), "guidance": encode(value.guidance)}
+    if dataclasses.is_dataclass(value):
+        return {f.name: encode(getattr(value, f.name)) for f in dataclasses.fields(value)}
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {k: encode(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [encode(v) for v in value]
+    return value
+
+
+def load(path: str) -> Union[Parsed, Error]:
+    def object_pairs(pairs: Any) -> Any:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+    try:
+        return Parsed(json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=object_pairs,
+                                 parse_constant=lambda value: (_ for _ in ()).throw(ValueError("invalid JSON constant"))))
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        return Error("invalid-json", str(exc))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    detector = sub.add_parser("detect")
+    detector.add_argument("--ros-distro", required=True)
+    classifier = sub.add_parser("classify")
+    classifier.add_argument("facts")
+    validator = sub.add_parser("validate")
+    validator.add_argument("catalog")
+    selector = sub.add_parser("select")
+    selector.add_argument("catalog")
+    selector.add_argument("facts")
+    selector.add_argument("request")
+    args = parser.parse_args()
+    if args.command == "detect":
+        raw = collect(args.ros_distro)
+        result = Parsed({"schema_version": 1, "facts": encode(raw), "platform": encode(classify(raw))})
+    else:
+        loaded = load(args.facts if args.command == "classify" else args.catalog)
+        result = loaded
+        if isinstance(loaded, Parsed):
+            result = parse_facts(loaded.value) if args.command == "classify" else parse_catalog(loaded.value)
+        if isinstance(result, Parsed):
+            if args.command == "classify":
+                result = Parsed({"schema_version": 1, "platform": encode(classify(result.value))})
+            elif args.command == "validate":
+                result = Parsed({"schema_version": 1, "recipe_count": len(result.value)})
+            else:
+                catalog = result.value
+                raw_facts, raw_request = load(args.facts), load(args.request)
+                facts = parse_facts(raw_facts.value) if isinstance(raw_facts, Parsed) else raw_facts
+                request = parse_request(raw_request.value) if isinstance(raw_request, Parsed) else raw_request
+                if isinstance(facts, Error):
+                    result = facts
+                elif isinstance(request, Error):
+                    result = request
+                else:
+                    operation, parameters = request.value
+                    selected = select(catalog, classify(facts.value), operation)
+                    result = selected if isinstance(selected, Error) else Parsed({
+                        "schema_version": 1, "recipe": encode(selected.value),
+                        "parameters": dict(parameters)})
+    if isinstance(result, Error):
+        print(json.dumps({"outcome": "unsupported" if result.code in ("no-match", "unknown-platform", "ambiguous-selection", "unsupported-operation") else "error",
+                          "error": encode(result)}, sort_keys=True))
+        return 1 if result.code in ("no-match", "unknown-platform", "ambiguous-selection", "unsupported-operation") else 2
+    print(json.dumps(dict(result.value, outcome="ok"), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

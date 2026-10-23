@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "facts": {
+    "system": {
+      "state": "known",
+      "values": [
+        "Linux"
+      ]
+    },
+    "version": {
+      "state": "known",
+      "values": [
+        "24.04"
+      ]
+    },
+    "machine": {
+      "state": "known",
+      "values": [
+        "aarch64"
+      ]
+    },
+    "os_id": {
+      "state": "known",
+      "values": [
+        "ubuntu"
+      ]
+    },
+    "os_version": {
+      "state": "known",
+      "values": [
+        "24.04"
+      ]
+    },
+    "kernel_release": {
+      "state": "known",
+      "values": [
+        "6.6.87.2-microsoft-standard-WSL2"
+      ]
+    },
+    "ssh": {
+      "state": "none",
+      "values": []
+    },
+    "vm": {
+      "state": "not-observed",
+      "values": []
+    },
+    "tools": {
+      "state": "known",
+      "values": [
+        "apt-get",
+        "docker"
+      ]
+    },
+    "display": {
+      "state": "not-observed",
+      "values": []
+    },
+    "gpu": {
+      "state": "not-observed",
+      "values": []
+    },
+    "network": {
+      "state": "not-observed",
+      "values": []
+    },
+    "ros_distro": {
+      "state": "known",
+      "values": [
+        "lyrical"
+      ]
+    }
+  }
+}
