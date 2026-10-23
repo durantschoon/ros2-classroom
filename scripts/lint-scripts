@@ -27,9 +27,9 @@ EXTRA_SCRIPTS = ("docker/entrypoint.sh", "docker/desktop/openbox-autostart")
 SOURCED_BASH = "docker/bashrc.d/*.sh"  # sourced by bash; no shebang
 HOST_TESTS = "tests/host/*.py"  # unittest modules; imported, so no shebang
 
-# Shell files that stay shell permanently, so their shellcheck findings fail
-# the lint. Every other shell file is slated for the Python port and is
-# advisory only. See docs/roadmap.md, "Language: Python replaces shell".
+# The only remaining shell files are permanent; their shellcheck findings
+# fail the lint. Other shell paths retain the advisory policy if introduced.
+# See docs/roadmap.md, "Language: Python replaces shell".
 ENFORCED_SHELL = ("docker/entrypoint.sh", SOURCED_BASH, "docker/desktop/openbox-autostart")
 
 # Host-side scripts, and the tests that run beside them on a student's or a

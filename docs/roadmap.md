@@ -51,8 +51,9 @@ Decisions made along the way:
   `make image` and `make selftest`.
 - **`make node` is deferred.** Adding a node to an existing package means
   patching a `CMakeLists.txt` or `setup.py` the student may already have
-  edited by hand — much riskier than generating fresh files. Revisit once
-  `pkg` is ported to Python (see the language section below).
+  edited by hand — much riskier than generating fresh files. The `pkg` Python
+  port is complete (see the language section below), so that prerequisite is
+  met; `make node` remains deferred and is not implemented.
 - **Two terminals, stated everywhere.** Every `make` command runs on the
   student's own computer; the terminal inside the browser desktop is for ROS
   commands. Because `make` exists inside the container, a workstation target
@@ -107,8 +108,8 @@ Acceptance: a new student is asked exactly once; nothing native is printed
 for a student who chose option 1; and no command is ever printed without a
 verification status attached.
 
-Planned pipeline stages, to be authored after the Python port (stages 01-05)
-lands, since recipes are structured data and belong in Python:
+The Python port prerequisite is complete. The native recipe work below is
+still planned; recipes are structured data and belong in Python:
 
 1. The first-run question, its saved answer, and the target that changes it.
 2. The recipe data model and platform detection (the Stage 4 decision points).
@@ -247,21 +248,24 @@ contains, choose not to send it, and still get a usable fix prompt.
   secret; and because students then never touch Docker Hub at all.
   The image must be published for amd64 **and** arm64, or Apple Silicon
   students get emulation and a crawling desktop. `make image` would then pull
-  by default and build only on request. Sequenced after the Python port.
+  by default and build only on request. The Python port prerequisite is
+  complete; GHCR publication remains planned.
 - **A friendlier front door (GitHub Pages)** only if the README becomes too
   dense for a first-time student.
 
 ## Language: Python replaces shell
 
-**Decided 2026-09-18.** Tooling moves from shell to Python, not Go.
+**Python port complete.** The host and container scripts, including the
+smoke suite and `rqt_graph` wrapper, now use Python. The language decision was
+made on 2026-09-18.
 
 Why Python:
 
 - It is already in the image, so the container side adds nothing.
 - It is ROS's own tooling language (`ros2`, `colcon`, and `rosdep` are all
   Python), and students writing `rclpy` nodes can read the tools they use.
-- `pkg` is already mostly Python: its file patching is embedded Python heredocs
-  inside a bash script.
+- Python gives `pkg` a single language for command execution, templates, and
+  file patching.
 - On the host, wherever `make` works `python3` does too. macOS gets both from
   the Command Line Tools; Linux and WSL ship Python 3. So it adds no install
   burden for anyone who can already run the Makefile.
@@ -271,19 +275,21 @@ Constraints this sets:
 - **Host scripts are stdlib-only and Python 3.9-compatible**, because macOS's
   Command Line Tools ship 3.9. No third-party imports: a `pip install` step
   would be exactly the setup grunt this project exists to remove.
-- **Some things stay shell because they must.** The bashrc drop-in is
-  *sourced* by bash, and it holds the `make` guard. The entrypoint sources
-  `setup.bash` before exec. Openbox runs its autostart as shell. The Makefile
+- **Only three permanent shell files remain.**
+  `docker/bashrc.d/ros-workspace.sh` is *sourced* by bash and holds the `make`
+  guard. `docker/entrypoint.sh` sources `setup.bash` before exec.
+  `docker/desktop/openbox-autostart` is run as shell by Openbox. The Makefile
   stays as the student-facing interface; its recipes call the Python scripts.
 
 What this gives up: Windows students without WSL still get no native tooling,
 which a Go binary would have provided. WSL is already the documented Windows
 route, so that is an acceptable trade.
 
-**Porting order.** Never change the tests and the code in the same step. Port
-the host and container scripts first, with the existing shell smoke suite as
-the oracle, which must stay green after every script. Port the smoke suite
-itself last, once everything it checks is already Python.
+**Regression protection.** The host and container scripts were ported against
+existing behavior tests, followed by the smoke suite itself. The host tests
+continue to protect the completed port's command arguments, output, statuses,
+and process behavior. The linter checks host scripts and tests against the
+Python 3.9 grammar; that grammar check is separate from runtime validation.
 
 For the record, of the fourteen bugs found while building Stages 0 and 1, one
 was a shell-language bug (`"$*"` dropping quotes). The rest were platform,
@@ -300,4 +306,6 @@ not a lower bug count.
 ## Status
 
 Stage 0 (the container workstation itself) and Stage 1 (task-level make
-targets) are done and verified. Stages 2-4 are not started.
+targets) are done and verified, with `make node` still deferred. The Python
+port is complete. Native recipes, GHCR publication, and Stages 2-4 remain
+planned.

@@ -1,23 +1,23 @@
 # Host-script tests
 
-Black-box tests for the scripts in `scripts/`, the ones that run on your own
-computer rather than inside the container.
+Black-box regression tests for the scripts in `scripts/`, which run on your
+own computer, and the container's `rqt_graph` wrapper.
 
 ```sh
 make check                                  # the same thing, via make
 python3 -m unittest discover -s tests/host -v
 ```
 
-They need no container engine, no network, and no containers, and they finish in
-a couple of seconds.
+They need no container engine, no network, and no containers. The full suite
+takes about 40 seconds on this machine.
 
 ## The one rule
 
 **Each test runs a script as a subprocess and asserts only on stdout, stderr,
-and exit status.** Nothing here imports, sources, or greps a script's text, so
-the same tests must keep passing when a script is rewritten in another language.
-That is the point: they exist so the Python port
-([../../docs/roadmap.md](../../docs/roadmap.md)) can be proved equivalent.
+exit status, and process behavior.** Nothing here imports, sources, or greps a
+script's text. These tests now provide regression protection for the completed
+[Python port](../../docs/roadmap.md), including lossless wrapper arguments,
+unchanged streams and exit status, and exec replacement.
 
 ## How a script sees the world
 
@@ -99,9 +99,10 @@ Two things about that file are worth knowing before editing it:
   the tests that inspect it.
 
 The suite `cd`s to the repository root and runs the real `Makefile`, so these
-tests need `make`, `bash`, `seq`, `awk` and a few other system tools. Where one
-is missing — the Python 3.9 container used for the grammar check, for instance —
-the whole file skips.
+tests need the external tools `make` and `bash`, in addition to the Python
+interpreter used by the suite and its fakes. If either tool is missing, the
+whole file skips. The linter separately checks the host tests against the
+Python 3.9 grammar; it does not validate a Python 3.9 runtime.
 
 ## Skips
 
