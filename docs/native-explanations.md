@@ -29,7 +29,7 @@ exactly these keys: `system`, `version`, `machine`, `os_id`, `os_version`,
 Each observation is `{"state": "known", "values": ["value"]}` or a state
 `unknown`, `none`, or `not-observed` with an empty `values` array. Only `tools`
 allows more than one value. Values must be unique nonempty strings without
-control characters.
+control characters (C0, DEL, or C1).
 
 - `known` records available evidence; it does not certify runtime usability.
 - `unknown` means a consulted source could not classify a fact.
@@ -40,7 +40,9 @@ control characters.
 
 `detect` returns both raw `facts` and the classified `platform`. To replay it,
 pass just `schema_version` and `facts` to `classify`; classification returns the
-same `platform`. The platform includes every observation plus normalized `os`,
+same `platform`. Collected facts pass through the same parser before detection
+can succeed, so malformed detector inputs produce structured errors rather than
+unreplayable success output. The platform includes every observation plus normalized `os`,
 `architecture`, `context`, `route`, and `engine`; its `version` is the actual
 OS version (Linux VERSION_ID, macOS ProductVersion, Windows major.minor.build).
 Unknown OS identifiers are retained, rather than inferred from installed tools.
@@ -57,7 +59,10 @@ not-observed, since a desktop can exist without these markers. Unrecognized or
 unavailable VM evidence means unknown, not a claim of physical hardware.
 
 `context` distinguishes host-native execution from a WSL Linux guest; a Linux
-kernel release containing Microsoft identifies the latter. Windows remains a
+kernel release containing Microsoft identifies the latter. Linux context requires
+a known kernel release: unknown/none kernel evidence yields unknown context,
+while not-observed kernel evidence yields not-observed context. These contexts
+cannot select a native recipe. Windows remains a
 Windows bootstrap host even if wsl.exe is installed. VM and SSH observations
 are retained separately and can coexist with WSL or host-native execution;
 `context: native` is not a claim of physical hardware or a local terminal.
@@ -125,7 +130,7 @@ or placeholder scanning occurs. `guidance` is an array of nonempty strings.
 ## Operations and parameters
 
 Request JSON has exactly `operation` and `parameters`, with exactly the required
-keys below. All parameter values are nonempty strings without control characters.
+keys below. All parameter values are nonempty strings without control characters (C0, DEL, or C1).
 
 | Operation | Parameters | Semantic obligation for future recipe authors |
 | --- | --- | --- |

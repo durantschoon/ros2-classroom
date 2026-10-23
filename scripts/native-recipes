@@ -160,7 +160,7 @@ def word(value: Any) -> bool:
 
 def text(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip()) and not any(
-        ord(c) < 32 for c in value)
+        ord(c) < 32 or 127 <= ord(c) <= 159 for c in value)
 
 
 def parse_fact(value: Any) -> Union[Parsed, Error]:
@@ -215,16 +215,22 @@ def classify(facts: Mapping[str, Fact]) -> Dict[str, Fact]:
         os_name = single(facts["os_id"])
         version = facts["os_version"]
     release = single(facts["kernel_release"]).lower()
-    context = "wsl" if system == "Linux" and "microsoft" in release else "native"
-    if system not in ("Linux", "Darwin", "Windows"):
-        context = ""
+    context = known("native")
+    if system == "Linux":
+        kernel = facts["kernel_release"]
+        if kernel.state is State.KNOWN:
+            context = known("wsl" if "microsoft" in release else "native")
+        else:
+            context = Fact(State.NOT_OBSERVED if kernel.state is State.NOT_OBSERVED else State.UNKNOWN)
+    elif system not in ("Darwin", "Windows"):
+        context = Fact(State.UNKNOWN)
     route = "apt" if os_name == "ubuntu" else {"macos": "pixi", "windows": "wsl2"}.get(os_name, "")
     tools = facts["tools"]
     engines = tuple(t for t in tools.values if t in ("docker", "podman"))
     engine = Fact(State.KNOWN, engines) if engines else Fact(
         State.NONE if tools.state in (State.KNOWN, State.NONE) else tools.state)
     return dict(facts, os=known(os_name), version=version, architecture=known(arch),
-                context=known(context), route=known(route), engine=engine)
+                context=context, route=known(route), engine=engine)
 
 
 def parse_platform(raw: Any) -> Union[Parsed, Error]:
@@ -457,8 +463,10 @@ def main() -> int:
     selector.add_argument("request")
     args = parser.parse_args()
     if args.command == "detect":
-        raw = collect(args.ros_distro)
-        result = Parsed({"schema_version": 1, "facts": encode(raw), "platform": encode(classify(raw))})
+        collected = {"schema_version": 1, "facts": encode(collect(args.ros_distro))}
+        parsed = parse_facts(collected)
+        result = parsed if isinstance(parsed, Error) else Parsed(dict(
+            collected, platform=encode(classify(parsed.value))))
     else:
         loaded = load(args.facts if args.command == "classify" else args.catalog)
         result = loaded

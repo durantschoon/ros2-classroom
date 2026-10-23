@@ -224,6 +224,40 @@ class NativeRecipeTests(unittest.TestCase):
                                   ("package-template", {"workspace": "ws", "package": "p", "build_type": "ament_cmake", "template": "invented"})):
             self.select([], operation=operation, parameters=params, expected=2)
 
+    def test_unknown_linux_kernel_never_implies_native_or_selects_recipe(self):
+        original = json.loads((FIXTURES / "ubuntu.json").read_text())
+        for state in ("unknown", "none", "not-observed"):
+            with self.subTest(state=state):
+                raw = copy.deepcopy(original)
+                raw["facts"]["kernel_release"] = {"state": state, "values": []}
+                path = self.write(raw)
+                host = self.cli("classify", path)["platform"]
+                self.assertEqual(host["kernel_release"], raw["facts"]["kernel_release"])
+                self.assertEqual(host["context"], {"state": "not-observed" if state == "not-observed" else "unknown", "values": []})
+                result = self.cli("select", self.write({"schema_version": 1, "recipes": [recipe()]}),
+                                  path, self.write({"operation": "install", "parameters": {}}), expected=1)
+                self.assertEqual(result["error"]["code"], "unknown-platform")
+                self.assertNotIn("recipe", result)
+
+    def test_detect_rejects_control_characters_with_structured_errors(self):
+        for character in ("\n", "\r", "\t", "\x01", "\x1b", "\x7f", "\x85"):
+            with self.subTest(character=repr(character)):
+                result = self.cli("detect", "--ros-distro", "lyrical" + character + "invalid", expected=2)
+                self.assertEqual(result["error"]["code"], "invalid-fact")
+                self.assertNotIn("facts", result)
+                raw = json.loads((FIXTURES / "ubuntu.json").read_text())
+                raw["facts"]["ros_distro"]["values"] = ["lyrical" + character + "invalid"]
+                self.cli("classify", self.write(raw), expected=2)
+
+    def test_successful_detector_facts_always_replay_through_classifier(self):
+        for distro in ("lyrical", "configured-distro", ""):
+            with self.subTest(distro=distro):
+                detected = self.cli("detect", "--ros-distro", distro)
+                replay = self.cli("classify", self.write({"schema_version": 1, "facts": detected["facts"]}))
+                self.assertEqual(replay["platform"], detected["platform"])
+                expected_state = "known" if distro else "unknown"
+                self.assertEqual(detected["facts"]["ros_distro"]["state"], expected_state)
+
     def test_real_detection_is_passive_private_and_reclassifiable(self):
         trap = self.directory / "bin"
         trap.mkdir()
