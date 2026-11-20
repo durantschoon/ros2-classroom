@@ -909,6 +909,7 @@ def die_on_signal(signum: int, _frame: object) -> None:
 
 
 def main(argv: Sequence[str]) -> int:
+    os.environ["EXPLAIN"] = "0"
     os.chdir(str(REPO))
 
     base = compose_command()

@@ -1,0 +1,124 @@
+name: Native Ubuntu recipes
+on:
+  pull_request:
+  push:
+    branches: [native-explanations, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ubuntu-apt:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute exact rendered recipes with ROS initially absent
+        env:
+          ROS_DOMAIN_ID: '87'
+          ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+        run: |
+          test ! -e /opt/ros/lyrical
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import runpy
+          import signal
+          import subprocess
+          import tempfile
+          m = runpy.run_path('scripts/native-recipes')
+          catalog_raw = json.loads(Path('recipes/native/ubuntu-apt.json').read_text())
+          parsed = m['parse_catalog'](catalog_raw)
+          assert isinstance(parsed, m['Parsed']), parsed
+          facts = m['parse_facts']({'schema_version': 1, 'facts': m['encode'](m['collect']('lyrical'))})
+          assert isinstance(facts, m['Parsed']), facts
+          platform = m['classify'](facts.value)
+          workspace = str(Path(tempfile.mkdtemp(prefix='native-ros-workspace-')))
+          verified = []
+          def script(operation, **parameters):
+              request = m['parse_request']({'operation': operation, 'parameters': parameters})
+              assert isinstance(request, m['Parsed']), request
+              selected = m['select'](parsed.value, platform, request.value[0])
+              assert isinstance(selected, m['Parsed']), selected
+              recipe = selected.value
+              rendered = m['render'](recipe, parameters)
+              digest = m['fingerprint'](recipe)
+              verified.append({'recipe': recipe.identity, 'recipe_sha256': digest})
+              print(rendered, flush=True)
+              return rendered
+          def execute(operation, **parameters):
+              subprocess.run(['bash', '-e'], input=script(operation, **parameters), text=True,
+                             check=True, timeout=1800 if operation == 'install' else 180)
+          try:
+              execute('install')
+              execute('package', workspace=workspace, package='native_smoke', build_type='ament_cmake')
+              execute('package', workspace=workspace, package='native_python', build_type='ament_python')
+              execute('build-workspace', workspace=workspace)
+              execute('build', workspace=workspace, package='native_smoke')
+              execute('test', workspace=workspace, package='native_smoke')
+              execute('test-workspace', workspace=workspace)
+              execute('session', workspace=workspace)
+              subprocess.run(['bash', '-e'], input=script('shell', workspace=workspace) + 'exit\n',
+                             text=True, check=True, timeout=30)
+              # Exercise the real Make dispatch as well as the pure renderer.
+              with tempfile.TemporaryDirectory(prefix='native-recorders-') as fake_dir:
+                  fake_path = Path(fake_dir)
+                  calls = fake_path / 'calls'
+                  for name in ('docker', 'podman', 'curl', 'xdg-open', 'wsl', 'apt-get', 'ros2', 'colcon', 'compose'):
+                      recorder = fake_path / name
+                      recorder.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "' + str(calls) + '"\necho WORKFLOW\n')
+                      recorder.chmod(0o755)
+                  env = dict(os.environ, PATH=fake_dir + os.pathsep + os.environ['PATH'])
+                  only = subprocess.run(['make', '--no-print-directory', '-j4', 'shell', 'build', 'test', 'run',
+                                         'EXPLAIN=only', 'PKG=native_smoke', 'NODE=talker',
+                                         'NATIVE_WORKSPACE=' + workspace], env=env, text=True, capture_output=True, timeout=30)
+                  assert not calls.exists(), only.stdout + only.stderr
+                  invalid = subprocess.run(['make', '--no-print-directory', 'shell', 'EXPLAIN=1',
+                                            'NATIVE_WORKSPACE=C:\\ros2_ws'], env=env, text=True, capture_output=True, timeout=30)
+                  assert invalid.returncode != 0 and not calls.exists(), invalid.stdout + invalid.stderr
+                  selected = m['select'](parsed.value, platform, m['Operation'].SHELL)
+                  admitted = m['admitted'](selected.value)
+                  assert only.returncode == (0 if admitted else 2), only.stdout + only.stderr
+                  if admitted:
+                      assert only.stdout.count('# Native Bash commands:') == 4, only.stdout
+                      on = subprocess.run(['make', '--no-print-directory', 'shell', 'EXPLAIN=1',
+                                           'COMPOSE=' + str(fake_path / 'compose'), 'ENGINE=docker',
+                                           'NATIVE_WORKSPACE=' + workspace], env=env, text=True, capture_output=True, timeout=30)
+                      assert on.returncode == 0, on.stdout + on.stderr
+                      assert on.stdout.index('# Native Bash commands:') < on.stdout.index('WORKFLOW'), on.stdout
+                  else:
+                      assert 'unavailable' in only.stderr
+              with tempfile.TemporaryFile(mode='w+') as output:
+                  run = subprocess.Popen(['bash', '-e'], stdin=subprocess.PIPE, stdout=output,
+                                         stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                  run.stdin.write(script('run', workspace=workspace, package='demo_nodes_cpp', node='talker'))
+                  run.stdin.close()
+                  try:
+                      status = run.wait(timeout=8)
+                      raise AssertionError('talker exited before timeout: ' + str(status))
+                  except subprocess.TimeoutExpired:
+                      pass
+                  finally:
+                      if run.poll() is None:
+                          os.killpg(run.pid, signal.SIGTERM)
+                          run.wait(timeout=10)
+                  output.seek(0)
+                  text = output.read()
+                  print(text)
+                  assert 'Publishing:' in text, 'talker did not publish'
+          finally:
+              subprocess.run(['bash', '-c', 'source /opt/ros/lyrical/setup.bash && ros2 daemon stop'],
+                             timeout=15, check=False)
+              Path(os.environ['RUNNER_TEMP'], 'native-recipe-evidence.json').write_text(json.dumps({
+                  'run_id': os.environ['GITHUB_RUN_ID'], 'commit': os.environ['GITHUB_SHA'],
+                  'verified': verified}, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-recipe-evidence-${{ matrix.runner }}
+          path: ${{ runner.temp }}/native-recipe-evidence.json

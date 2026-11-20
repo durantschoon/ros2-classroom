@@ -1,0 +1,1807 @@
+{
+  "schema_version": 1,
+  "recipes": [
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-install",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "install",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-install",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "update"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "install"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "locales"
+            },
+            {
+              "literal": "software-properties-common"
+            },
+            {
+              "literal": "curl"
+            },
+            {
+              "literal": "ca-certificates"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "locale-gen"
+            },
+            {
+              "literal": "en_US"
+            },
+            {
+              "literal": "en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "update-locale"
+            },
+            {
+              "literal": "LC_ALL=en_US.UTF-8"
+            },
+            {
+              "literal": "LANG=en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "export"
+            },
+            {
+              "literal": "LANG=en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "add-apt-repository"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "universe"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; directory=$(mktemp -d); trap 'rm -rf -- \"$directory\"' EXIT; curl -fL -o \"$directory/ros2-apt-source.deb\" https://github.com/ros-infrastructure/ros-apt-source/releases/download/1.3.0/ros2-apt-source_1.3.0.resolute_all.deb; sudo dpkg -i \"$directory/ros2-apt-source.deb\""
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "update"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "upgrade"
+            },
+            {
+              "literal": "-y"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "install"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "ros-dev-tools"
+            },
+            {
+              "literal": "ros-lyrical-desktop"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-session",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "session",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-session",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; if [ -f \"$1/install/setup.bash\" ]; then printf 'Source your overlay in this terminal: source %q\\n' \"$1/install/setup.bash\"; else printf 'Build the workspace before sourcing its overlay.\\n'; fi"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-shell",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "shell",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-shell",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; if [ -f \"$1/install/setup.bash\" ]; then source \"$1/install/setup.bash\"; fi; exec bash --noprofile --norc -i"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-package",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "package",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-package",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "src"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "src"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; name=$(git config --global user.name 2>/dev/null) || name=\"ROS Developer\"; email=$(git config --global user.email 2>/dev/null) || email=\"dev@example.com\"; ros2 pkg create \"$1\" --build-type \"$2\" --license Apache-2.0 --maintainer-name \"$name\" --maintainer-email \"$email\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "package"
+            },
+            {
+              "parameter": "build_type"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-build-workspace",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "build-workspace",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-build-workspace",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "colcon"
+            },
+            {
+              "literal": "build"
+            },
+            {
+              "literal": "--symlink-install"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-build",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "build",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-build",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "colcon"
+            },
+            {
+              "literal": "build"
+            },
+            {
+              "literal": "--symlink-install"
+            },
+            {
+              "literal": "--packages-select"
+            },
+            {
+              "parameter": "package"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-run",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "run",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-run",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; exec ros2 run \"$2\" \"$3\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            },
+            {
+              "parameter": "package"
+            },
+            {
+              "parameter": "node"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-test-workspace",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "test-workspace",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-test-workspace",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; colcon test; colcon test-result --verbose"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-amd64-test",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "amd64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "test",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-amd64-test",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; colcon test --packages-select \"$2\"; colcon test-result --verbose --test-result-base \"$1/build/$2\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            },
+            {
+              "parameter": "package"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-install",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "install",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-install",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "update"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "install"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "locales"
+            },
+            {
+              "literal": "software-properties-common"
+            },
+            {
+              "literal": "curl"
+            },
+            {
+              "literal": "ca-certificates"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "locale-gen"
+            },
+            {
+              "literal": "en_US"
+            },
+            {
+              "literal": "en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "update-locale"
+            },
+            {
+              "literal": "LC_ALL=en_US.UTF-8"
+            },
+            {
+              "literal": "LANG=en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "export"
+            },
+            {
+              "literal": "LANG=en_US.UTF-8"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "add-apt-repository"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "universe"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; directory=$(mktemp -d); trap 'rm -rf -- \"$directory\"' EXIT; curl -fL -o \"$directory/ros2-apt-source.deb\" https://github.com/ros-infrastructure/ros-apt-source/releases/download/1.3.0/ros2-apt-source_1.3.0.resolute_all.deb; sudo dpkg -i \"$directory/ros2-apt-source.deb\""
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "update"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "upgrade"
+            },
+            {
+              "literal": "-y"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "sudo"
+            },
+            {
+              "literal": "apt-get"
+            },
+            {
+              "literal": "install"
+            },
+            {
+              "literal": "-y"
+            },
+            {
+              "literal": "ros-dev-tools"
+            },
+            {
+              "literal": "ros-lyrical-desktop"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-session",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "session",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-session",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; if [ -f \"$1/install/setup.bash\" ]; then printf 'Source your overlay in this terminal: source %q\\n' \"$1/install/setup.bash\"; else printf 'Build the workspace before sourcing its overlay.\\n'; fi"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-shell",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "shell",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-shell",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; if [ -f \"$1/install/setup.bash\" ]; then source \"$1/install/setup.bash\"; fi; exec bash --noprofile --norc -i"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-package",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "package",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-package",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "src"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "src"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; name=$(git config --global user.name 2>/dev/null) || name=\"ROS Developer\"; email=$(git config --global user.email 2>/dev/null) || email=\"dev@example.com\"; ros2 pkg create \"$1\" --build-type \"$2\" --license Apache-2.0 --maintainer-name \"$name\" --maintainer-email \"$email\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "package"
+            },
+            {
+              "parameter": "build_type"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-build-workspace",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "build-workspace",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-build-workspace",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "mkdir"
+            },
+            {
+              "literal": "-p"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "colcon"
+            },
+            {
+              "literal": "build"
+            },
+            {
+              "literal": "--symlink-install"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-build",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "build",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-build",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "colcon"
+            },
+            {
+              "literal": "build"
+            },
+            {
+              "literal": "--symlink-install"
+            },
+            {
+              "literal": "--packages-select"
+            },
+            {
+              "parameter": "package"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-run",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "run",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-run",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; exec ros2 run \"$2\" \"$3\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            },
+            {
+              "parameter": "package"
+            },
+            {
+              "parameter": "node"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-test-workspace",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "test-workspace",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-test-workspace",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; colcon test; colcon test-result --verbose"
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    },
+    {
+      "id": "ubuntu-26.04-lyrical-arm64-test",
+      "platform": {
+        "os": "ubuntu",
+        "version": "26.04",
+        "architecture": "arm64",
+        "route": "apt",
+        "ros_distro": "lyrical",
+        "context": "native"
+      },
+      "operation": "test",
+      "verification": {
+        "status": "verified-in-ci",
+        "reference": "https://example.invalid/native-recipe-candidate",
+        "date": "2026-10-23",
+        "procedure": "Synthetic candidate metadata only; CI must execute this exact command group before admission.",
+        "subject": "ubuntu-26.04-lyrical-arm64-test",
+        "provenance": {
+          "ci_run": "CANDIDATE - no successful run yet"
+        }
+      },
+      "commands": [
+        {
+          "argv": [
+            {
+              "literal": "source"
+            },
+            {
+              "literal": "/opt/ros/lyrical/setup.bash"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "cd"
+            },
+            {
+              "literal": "--"
+            },
+            {
+              "parameter": "workspace"
+            }
+          ]
+        },
+        {
+          "argv": [
+            {
+              "literal": "bash"
+            },
+            {
+              "literal": "-c"
+            },
+            {
+              "literal": "set -e; source \"$1/install/setup.bash\"; colcon test --packages-select \"$2\"; colcon test-result --verbose --test-result-base \"$1/build/$2\""
+            },
+            {
+              "literal": "bash"
+            },
+            {
+              "parameter": "workspace"
+            },
+            {
+              "parameter": "package"
+            }
+          ]
+        }
+      ],
+      "guidance": [
+        "Paste into Bash. Requires a local Ubuntu installation, sudo access and network for setup.",
+        "Official source: https://github.com/ros2/ros2_documentation/blob/df1973e7f60a67ce172651c38674e915298a531f/source/Get-Started/Installation/Ubuntu-Install-Debs.rst",
+        "Install ROS first. Build the workspace before sourcing its overlay; source install/setup.bash in each terminal after building."
+      ]
+    }
+  ]
+}
