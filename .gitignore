@@ -20,3 +20,6 @@ __pycache__/
 
 # Logs from local job runners (tmux-run, launchd-run).
 logs/
+
+# Local host preferences
+.workstation/
